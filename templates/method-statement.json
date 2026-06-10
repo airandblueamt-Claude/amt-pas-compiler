@@ -1,0 +1,15 @@
+{
+  "name": "method-statement",
+  "toc_title_en": "Table of Content",
+  "toc_title_ar": "جدول المحتويات",
+  "sections": [
+    { "no": 1, "prefix": "1", "kind": "append", "optional": false,
+      "en": "Cover Letter",     "ar": "خطاب التقديم" },
+    { "no": 2, "prefix": "2", "kind": "append", "optional": false,
+      "en": "Method Statement", "ar": "بيان طريقة العمل" },
+    { "no": 3, "prefix": "3", "kind": "append", "optional": false,
+      "en": "Risk Assessment",  "ar": "تقييم المخاطر" },
+    { "no": 4, "prefix": "4", "kind": "append", "optional": true,
+      "en": "Approvals",        "ar": "الموافقات" }
+  ]
+}
