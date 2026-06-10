@@ -1,0 +1,37 @@
+{
+  "ref_no": "2506038-TCS-010",
+  "version": "00",
+  "mts_ref_no": "2506038-MTS-010",
+  "date": "04-June-2026",
+
+  "project_title_en": "Material Submittal for IPTV and Digital Signage System",
+  "project_title_ar": "التقديم الفني لنظام IPTV والشاشات الرقمية",
+  "company_name_ar": "شركة الأبعاد المترامية للتقنية",
+
+  "client": "King Fahd University Hospital (KFUH) - Building B02",
+  "building": "B02",
+
+  "template": "material-submittal",
+
+  "client_logo_comment": "Optional. Path to a client/project logo for the cover.",
+
+  "client_logo": "",
+
+  "signoff": {
+    "prepared_by": { "role_en": "Sales Coordinator",  "initials": "MSD" },
+    "checked_by":  { "role_en": "Document Controller", "initials": "MZK" },
+    "approved_by": { "role_en": "Presales Manager",    "initials": "MGT" }
+  },
+  "revision": { "author": "SKR", "remarks": "Issued for approval" },
+
+  "input_dir": "/absolute/path/to/Technical Submittal_<project>_<date>",
+  "output_pdf": "/absolute/path/to/<ref> v.<version> PAS.pdf",
+
+  "render_engine": "auto",
+  "missing_section_mode": "placeholder",
+  "placeholder_note": "To be submitted / Certificate to follow",
+  "stamp_appended_pages": false,
+
+  "normalize_appended": true,
+  "drawing_fit": "native"
+}

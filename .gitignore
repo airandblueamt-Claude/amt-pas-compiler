@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Build / output artifacts (submittals are generated, not source)
+*.pdf
+output/
+build/
+dist/
+
+# Per-job configs (each job makes its own from config.example.json)
+my.config.json
+*-pas.config.json
+!config.example.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+*:Zone.Identifier
+*:com.dropbox.attributes
+.idea/
+.vscode/

@@ -1,0 +1,24 @@
+{
+  "name": "material-submittal",
+  "toc_title_en": "Table of Content",
+  "toc_title_ar": "جدول المحتويات",
+  "sections": [
+    { "no": 1, "prefix": "1", "kind": "table",  "optional": false,
+      "en": "Tender BOQ", "ar": "جدول كميات العقد" },
+    { "no": 2, "prefix": "2", "kind": "table",  "optional": false,
+      "en": "Material Sheet Provided by AMT", "ar": "جدول المواد المقدمة من AMT" },
+    { "no": 3, "prefix": "3", "kind": "table",  "optional": false,
+      "en": "Material Traceability Sheet & Tender BoQ Compliance",
+      "ar": "جدول تتبع المواد والمطابقة مع جدول كميات العقد" },
+    { "no": 4, "prefix": "4", "kind": "table",  "optional": false,
+      "en": "Material Selection", "ar": "اختيار المواد" },
+    { "no": 5, "prefix": "5", "kind": "append", "optional": false,
+      "en": "Product's Datasheet & Catalogue", "ar": "النشرة الفنية والكتالوج للمنتجات" },
+    { "no": 6, "prefix": "6", "kind": "append", "optional": true,
+      "en": "Vendor Partnership Certificate", "ar": "شهادة شراكة مع المورد" },
+    { "no": 7, "prefix": "7", "kind": "append", "optional": true,
+      "en": "Warranty Certificate", "ar": "شهادة الضمان" },
+    { "no": 8, "prefix": "8", "kind": "append", "optional": false,
+      "en": "Layout and Single Line Diagram", "ar": "مخطط أحادي لجميع الأنظمة" }
+  ]
+}

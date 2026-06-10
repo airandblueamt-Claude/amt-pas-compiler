@@ -1,0 +1,278 @@
+"""
+render_tables.py — render a BOQ spreadsheet (.xlsx) to branded PDF table pages.
+
+Two engines:
+  * LibreOffice ("soffice --headless --convert-to pdf"): pixel-faithful to the
+    company's Excel formatting (Arabic RTL, merged cells). Used when available.
+  * reportlab fallback: reads the sheet with openpyxl and re-typesets a clean,
+    AMT-styled bilingual grid. Self-contained (no external binary needed).
+
+Both return a path to a PDF whose pages contain only the table (no logo/banner),
+matching how the sample embeds the rendered Excel sheets.
+"""
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+
+import openpyxl
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
+
+import amt_common as A
+from amt_common import (PAGE_W, PAGE_H, MARGIN_L, MARGIN_R, CONTENT_W,
+                        BLUE_HEADER, BLUE_BORDER, WHITE, BLACK, GREY_REF,
+                        F_EN, F_EN_B, F_AR, F_AR_B, ar)
+
+_ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
+
+
+def has_arabic(s: str) -> bool:
+    return bool(_ARABIC_RE.search(s or ""))
+
+
+def have_soffice() -> str | None:
+    """Locate a LibreOffice binary. Checks $AMT_SOFFICE, then PATH, then common
+    install locations including a user-extracted AppImage under ~/.local/opt."""
+    import glob
+    env = os.environ.get("AMT_SOFFICE")
+    if env and os.path.exists(env):
+        return env
+    for name in ("soffice", "libreoffice"):
+        path = shutil.which(name)
+        if path:
+            return path
+    patterns = [
+        os.path.expanduser("~/.local/opt/squashfs-root/opt/libreoffice*/program/soffice"),
+        os.path.expanduser("~/.local/opt/libreoffice*/program/soffice"),
+        "/opt/libreoffice*/program/soffice",
+        "/usr/lib/libreoffice/program/soffice",
+    ]
+    for pat in patterns:
+        hits = sorted(glob.glob(pat))
+        if hits:
+            return hits[-1]
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# LibreOffice engine
+# --------------------------------------------------------------------------- #
+def render_with_soffice(xlsx_path: str, out_pdf: str, soffice: str) -> str:
+    outdir = tempfile.mkdtemp(prefix="amt_lo_")
+    # A dedicated profile dir avoids clashes with a running LibreOffice instance.
+    profile = tempfile.mkdtemp(prefix="amt_loprof_")
+    cmd = [soffice, "--headless", "--nologo", "--nofirststartwizard",
+           f"-env:UserInstallation=file://{profile}",
+           "--convert-to", "pdf", "--outdir", outdir, xlsx_path]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+    base = os.path.splitext(os.path.basename(xlsx_path))[0] + ".pdf"
+    produced = os.path.join(outdir, base)
+    if not os.path.exists(produced):
+        raise RuntimeError(f"LibreOffice did not produce {produced}")
+    shutil.move(produced, out_pdf)
+    shutil.rmtree(outdir, ignore_errors=True)
+    shutil.rmtree(profile, ignore_errors=True)
+    return out_pdf
+
+
+# --------------------------------------------------------------------------- #
+# reportlab fallback engine
+# --------------------------------------------------------------------------- #
+def _cell_text(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+
+def _sheet_matrix(ws):
+    """Return (rows, ncols) trimmed to the used area, with merged cells expanded
+    so the top-left value shows and a merge-span map is available."""
+    rows = [[_cell_text(c) for c in r] for r in ws.iter_rows(values_only=True)]
+    while rows and all(c == "" for c in rows[-1]):
+        rows.pop()
+    if not rows:
+        return [], 0, {}
+    ncols = max((max((i + 1 for i, c in enumerate(r) if c != ""), default=0) for r in rows),
+                default=0)
+    rows = [r[:ncols] + [""] * (ncols - len(r)) for r in rows]
+    # merged spans -> {(r,c): (rowspan, colspan)} 0-indexed within used area
+    spans = {}
+    covered = set()
+    for mc in ws.merged_cells.ranges:
+        r0, c0, r1, c1 = mc.min_row - 1, mc.min_col - 1, mc.max_row - 1, mc.max_col - 1
+        if r0 >= len(rows) or c0 >= ncols:
+            continue
+        spans[(r0, c0)] = (r1 - r0 + 1, c1 - c0 + 1)
+        for rr in range(r0, min(r1 + 1, len(rows))):
+            for cc in range(c0, min(c1 + 1, ncols)):
+                if (rr, cc) != (r0, c0):
+                    covered.add((rr, cc))
+    return rows, ncols, spans, covered
+
+
+def _col_widths(ws, ncols):
+    """Approximate column widths (points) from Excel column dimensions, scaled
+    to the printable content width."""
+    widths = []
+    for i in range(ncols):
+        letter = openpyxl.utils.get_column_letter(i + 1)
+        dim = ws.column_dimensions.get(letter)
+        w = dim.width if dim and dim.width else 10
+        widths.append(max(w, 4))
+    total = sum(widths)
+    scale = CONTENT_W / total
+    return [w * scale for w in widths]
+
+
+def _wrap(text, font, size, max_w, is_ar):
+    words = str(text).split()
+    if not words:
+        return [""]
+    lines, cur = [], words[0]
+    for w in words[1:]:
+        trial = cur + " " + w
+        disp = ar(trial) if is_ar else trial
+        if stringWidth(disp, font, size) <= max_w:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    lines.append(cur)
+    return lines
+
+
+def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str) -> str:
+    A.register_fonts()
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    # pick the first non-empty, prefer a non-Arabic-named sheet (English layout)
+    ws = wb.active
+    for cand in wb.worksheets:
+        if cand.max_row and cand.max_column:
+            ws = cand
+            break
+    rows, ncols, spans, covered = _sheet_matrix(ws)
+    if ncols == 0:
+        rows, ncols, spans, covered = [["(empty sheet)"]], 1, {}, set()
+
+    colw = _col_widths(ws, ncols)
+    size = 8
+    pad = 3
+    line_h = size + 2
+
+    c = canvas.Canvas(out_pdf, pagesize=(PAGE_W, PAGE_H))
+    top_y = PAGE_H - 60
+    bottom_limit = 70
+    page_no = 1
+
+    def page_header():
+        c.setFont(F_EN_B, 12)
+        c.setFillColor(BLACK)
+        c.drawCentredString(PAGE_W / 2, PAGE_H - 45, title)
+
+    def page_footer(pn):
+        c.setFont(F_EN, 7)
+        c.setFillColor(GREY_REF)
+        c.drawString(MARGIN_L, 40, f"{title}")
+        c.drawRightString(PAGE_W - MARGIN_R, 40, f"{ref_no}      Page {pn}")
+        c.setFillColor(BLACK)
+
+    def row_height(r):
+        h = line_h + 2 * pad
+        for cidx in range(ncols):
+            if (r, cidx) in covered:
+                continue
+            txt = rows[r][cidx]
+            if not txt:
+                continue
+            span = spans.get((r, cidx), (1, 1))
+            w = sum(colw[cidx:cidx + span[1]]) - 2 * pad
+            is_ar = has_arabic(txt)
+            font = (F_AR if is_ar else F_EN)
+            nlines = len(_wrap(txt, font, size, w, is_ar))
+            h = max(h, nlines * line_h + 2 * pad)
+        return min(h, PAGE_H - 140)   # never taller than a page
+
+    page_header()
+    y = top_y
+    is_header_row = True
+    for r in range(len(rows)):
+        rh = row_height(r)
+        if y - rh < bottom_limit:
+            page_footer(page_no)
+            c.showPage()
+            page_no += 1
+            page_header()
+            y = top_y
+        x = MARGIN_L
+        for cidx in range(ncols):
+            if (r, cidx) in covered:
+                x += colw[cidx]
+                continue
+            span = spans.get((r, cidx), (1, 1))
+            cw = sum(colw[cidx:cidx + span[1]])
+            # header band for the first row
+            header_band = is_header_row
+            if header_band:
+                c.setFillColor(BLUE_HEADER)
+                c.rect(x, y - rh, cw, rh, stroke=0, fill=1)
+            c.setStrokeColor(BLUE_BORDER)
+            c.setLineWidth(0.5)
+            c.rect(x, y - rh, cw, rh, stroke=1, fill=0)
+            txt = rows[r][cidx]
+            if txt:
+                is_ar = has_arabic(txt)
+                font = (F_AR_B if header_band else F_AR) if is_ar else (F_EN_B if header_band else F_EN)
+                color = WHITE if header_band else BLACK
+                lines = _wrap(txt, font, size, cw - 2 * pad, is_ar)
+                c.setFont(font, size)
+                c.setFillColor(color)
+                ty = y - pad - size
+                for ln in lines:
+                    disp = ar(ln) if is_ar else ln
+                    if is_ar:
+                        c.drawRightString(x + cw - pad, ty, disp)
+                    else:
+                        c.drawString(x + pad, ty, disp)
+                    ty -= line_h
+                c.setFillColor(BLACK)
+            x += cw
+        y -= rh
+        is_header_row = False
+
+    page_footer(page_no)
+    c.showPage()
+    c.save()
+    return out_pdf
+
+
+# --------------------------------------------------------------------------- #
+# Dispatcher
+# --------------------------------------------------------------------------- #
+def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
+                 engine: str = "auto") -> tuple[str, str]:
+    """Render xlsx -> pdf. Returns (out_pdf, engine_used)."""
+    soffice = have_soffice()
+    use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
+    if use_lo:
+        if not soffice:
+            raise RuntimeError("render_engine=libreoffice but soffice not found on PATH.")
+        try:
+            return render_with_soffice(xlsx_path, out_pdf, soffice), "libreoffice"
+        except Exception as e:
+            if engine == "libreoffice":
+                raise
+            # fall through to reportlab on auto
+            print(f"  ! LibreOffice failed ({e}); using reportlab fallback.")
+    return render_with_reportlab(xlsx_path, out_pdf, title, ref_no), "reportlab"
+
+
+if __name__ == "__main__":
+    import sys
+    out, eng = render_table(sys.argv[1], "/tmp/table_test.pdf", "Tender BoQ", "2506038-TCS-010-v.00")
+    print("engine:", eng, "->", out)

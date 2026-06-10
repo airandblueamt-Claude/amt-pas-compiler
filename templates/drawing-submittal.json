@@ -1,0 +1,15 @@
+{
+  "name": "drawing-submittal",
+  "toc_title_en": "Table of Content",
+  "toc_title_ar": "جدول المحتويات",
+  "sections": [
+    { "no": 1, "prefix": "1", "kind": "table",  "optional": false,
+      "en": "Drawing Register", "ar": "سجل المخططات" },
+    { "no": 2, "prefix": "2", "kind": "append", "optional": false,
+      "en": "Single Line Diagrams", "ar": "المخططات أحادية الخط" },
+    { "no": 3, "prefix": "3", "kind": "append", "optional": false,
+      "en": "Floor Layout Plans", "ar": "مخططات توزيع الطوابق" },
+    { "no": 4, "prefix": "4", "kind": "append", "optional": true,
+      "en": "Details & Schematics", "ar": "التفاصيل والرسومات التخطيطية" }
+  ]
+}
