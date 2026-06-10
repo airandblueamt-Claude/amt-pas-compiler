@@ -32,6 +32,25 @@ print(f"  ✓ OK — default template '{t['name']}' with {len(t['sections'])} se
 PY
 
 echo
+if ls "$HERE"/tests/test_*.py >/dev/null 2>&1; then
+  echo "Running tests …"
+  fail=0
+  for t in "$HERE"/tests/test_*.py; do
+    if python3 "$t"; then
+      :
+    else
+      echo "  x FAILED: $(basename "$t")"
+      fail=1
+    fi
+  done
+  if [ "$fail" -ne 0 ]; then
+    echo "  ! One or more tests failed — the skill may not behave correctly."
+    exit 1
+  fi
+  echo "  ✓ All tests passed."
+fi
+
+echo
 echo "Done. Quick start:"
 echo "  cp $HERE/config.example.json my.config.json   # edit ref/title/client/paths"
 echo "  python3 $HERE/scripts/build_pas.py my.config.json --dry-run   # validate inputs"
