@@ -101,8 +101,14 @@ def discover(input_dir: str, sections: list | None = None) -> dict:
             sec["docx"] = _ordered(_collect_files(sdir, DOCX_EXTS))
             if not sec["pdfs"] and not sec["docx"]:
                 sec["status"] = "empty"
-                msg = f"Section {spec['no']} ({spec['en']}): no documents found — a placeholder will be inserted."
-                (manifest["warnings"] if spec["optional"] else manifest["warnings"]).append(msg)
+                if spec["optional"]:
+                    manifest["warnings"].append(
+                        f"Section {spec['no']} ({spec['en']}): no documents found — "
+                        f"a placeholder will be inserted.")
+                else:
+                    manifest["errors"].append(
+                        f"Section {spec['no']} ({spec['en']}): no documents found — "
+                        f"required section is empty.")
 
         manifest["sections"].append(sec)
 
