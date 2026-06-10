@@ -79,7 +79,7 @@ three rebuilds.
 **A different document type (not the 8-section PAS):**
 > "Build a method-statement submittal using the `method-statement` template. Inputs in
 > `<folder>` with sub-folders 1-Cover Letter, 2-Method Statement, 3-Risk Assessment,
-> 4-Approvals." *(See `HOWTO-new-submittal.md` for adding a new template.)*
+> 4-Approvals." *(See [HOWTO-new-submittal.md](HOWTO-new-submittal.md) for adding a new template.)*
 
 ---
 

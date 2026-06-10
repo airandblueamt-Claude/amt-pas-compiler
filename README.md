@@ -35,8 +35,7 @@ python3 scripts/build_pas.py my.config.json --dry-run   # validate the input fol
 python3 scripts/build_pas.py my.config.json             # build the submittal PDF
 ```
 In Claude Code you can also just ask: "build the PAS for <project>" and the skill
-triggers automatically. For the exact prompts that make it build cleanly first time,
-see **[PROMPTING.md](PROMPTING.md)**.
+triggers automatically.
 
 ## Input folder
 Sub-folders matched by their leading number (1–8); as-received name typos are fine:
@@ -45,3 +44,12 @@ Sub-folders matched by their leading number (1–8); as-received name typos are 
 ## Templates
 The section list is config-driven — see `templates/README.md`. The default is the
 8-section material submittal; add a JSON for other submittal types.
+
+## Documentation
+| Guide | What it covers |
+|-------|----------------|
+| [`SKILL.md`](SKILL.md) | Full reference — sections, config keys, rendering engines |
+| [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) | Clone-to-PDF, step by step (worked IPTV example) |
+| [`docs/PROMPTING.md`](docs/PROMPTING.md) | The exact prompts that make it build cleanly first time |
+| [`docs/HOWTO-new-submittal.md`](docs/HOWTO-new-submittal.md) | New project, or a different document structure via a template |
+| [`templates/README.md`](templates/README.md) | Section-list template format |
