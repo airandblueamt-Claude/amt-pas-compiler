@@ -35,7 +35,8 @@ python3 scripts/build_pas.py my.config.json --dry-run   # validate the input fol
 python3 scripts/build_pas.py my.config.json             # build the submittal PDF
 ```
 In Claude Code you can also just ask: "build the PAS for <project>" and the skill
-triggers automatically.
+triggers automatically. For the exact prompts that make it build cleanly first time,
+see **[PROMPTING.md](PROMPTING.md)**.
 
 ## Input folder
 Sub-folders matched by their leading number (1–8); as-received name typos are fine:
