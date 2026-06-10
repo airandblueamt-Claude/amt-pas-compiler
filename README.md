@@ -6,8 +6,15 @@ tables, appended datasheets, warranty and drawings — from a standard numbered 
 folder. See `SKILL.md` for full usage.
 
 ## Install (per machine)
-1. Copy this whole `amt-pas-compiler/` folder into `~/.claude/skills/`
-   (so it lives at `~/.claude/skills/amt-pas-compiler/`).
+1. Put the skill where Claude Code looks for it — `~/.claude/skills/amt-pas-compiler/`.
+
+   **From GitHub (recommended):**
+   ```bash
+   git clone https://github.com/airandblueamt-Claude/amt-pas-compiler.git \
+     ~/.claude/skills/amt-pas-compiler
+   cd ~/.claude/skills/amt-pas-compiler
+   ```
+   Or, if you already have the folder, just copy it into `~/.claude/skills/`.
 2. From inside the folder, run:
    ```bash
    bash install.sh
