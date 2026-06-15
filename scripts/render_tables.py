@@ -59,6 +59,37 @@ def have_soffice() -> str | None:
 
 
 # --------------------------------------------------------------------------- #
+# Fit-to-page preparation (so wide BOQ sheets scale onto one A4 width, centred,
+# instead of overflowing across several pages)
+# --------------------------------------------------------------------------- #
+def _prepare_xlsx_for_print(xlsx_path: str) -> str:
+    """Return a temp copy of the workbook with every sheet set to: A4 portrait,
+    fit-all-columns-to-one-page-wide, horizontally + vertically centred, with top/
+    bottom margins that leave room for the stamped AMT logo and footer banner."""
+    from openpyxl.worksheet.properties import PageSetupProperties
+    wb = openpyxl.load_workbook(xlsx_path)
+    for ws in wb.worksheets:
+        ws.page_setup.orientation = "portrait"
+        ws.page_setup.paperSize = 9            # A4
+        ws.page_setup.fitToWidth = 1           # all columns on one page wide
+        ws.page_setup.fitToHeight = 0          # as many pages tall as needed
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        ws.print_options.horizontalCentered = True   # centre the table (#4)
+        ws.print_options.verticalCentered = True
+        # margins are in inches; reserve space for the stamped header/footer
+        ws.page_margins.top = 1.18
+        ws.page_margins.bottom = 1.32
+        ws.page_margins.left = 0.4
+        ws.page_margins.right = 0.4
+        ws.page_margins.header = 0.2
+        ws.page_margins.footer = 0.2
+    fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
+    os.close(fd)
+    wb.save(tmp)
+    return tmp
+
+
+# --------------------------------------------------------------------------- #
 # LibreOffice engine
 # --------------------------------------------------------------------------- #
 def render_with_soffice(xlsx_path: str, out_pdf: str, soffice: str) -> str:
@@ -166,21 +197,18 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
     line_h = size + 2
 
     c = canvas.Canvas(out_pdf, pagesize=(PAGE_W, PAGE_H))
-    top_y = PAGE_H - 60
-    bottom_limit = 70
+    # Render inside the area reserved for the stamped AMT logo (top) and footer
+    # banner (bottom); branding is overlaid afterwards by amt_common.stamp_pdf.
+    top_y = PAGE_H - A.TABLE_TOP_RESERVE - 6
+    bottom_limit = A.TABLE_BOTTOM_RESERVE + 6
     page_no = 1
 
     def page_header():
-        c.setFont(F_EN_B, 12)
-        c.setFillColor(BLACK)
-        c.drawCentredString(PAGE_W / 2, PAGE_H - 45, title)
+        # title is shown on the section divider + the stamped logo; keep table clean
+        pass
 
     def page_footer(pn):
-        c.setFont(F_EN, 7)
-        c.setFillColor(GREY_REF)
-        c.drawString(MARGIN_L, 40, f"{title}")
-        c.drawRightString(PAGE_W - MARGIN_R, 40, f"{ref_no}      Page {pn}")
-        c.setFillColor(BLACK)
+        pass
 
     def row_height(r):
         h = line_h + 2 * pad
@@ -255,21 +283,46 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
 # Dispatcher
 # --------------------------------------------------------------------------- #
 def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
-                 engine: str = "auto") -> tuple[str, str]:
-    """Render xlsx -> pdf. Returns (out_pdf, engine_used)."""
+                 engine: str = "auto", brand: bool = True) -> tuple[str, str]:
+    """Render xlsx -> branded PDF table pages. Returns (out_pdf, engine_used).
+
+    The sheet is scaled to fit one A4 width and centred, then the AMT logo +
+    footer banner are stamped on each page (unless brand=False)."""
     soffice = have_soffice()
     use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
+
+    # render the bare table to a temp file, then stamp branding onto it
+    if brand:
+        fd, raw = tempfile.mkstemp(suffix=".pdf", prefix="amt_tbl_")
+        os.close(fd)
+    else:
+        raw = out_pdf
+
+    eng = "reportlab"
     if use_lo:
         if not soffice:
             raise RuntimeError("render_engine=libreoffice but soffice not found on PATH.")
+        prepared = None
         try:
-            return render_with_soffice(xlsx_path, out_pdf, soffice), "libreoffice"
+            prepared = _prepare_xlsx_for_print(xlsx_path)
+            render_with_soffice(prepared, raw, soffice)
+            eng = "libreoffice"
         except Exception as e:
             if engine == "libreoffice":
                 raise
-            # fall through to reportlab on auto
             print(f"  ! LibreOffice failed ({e}); using reportlab fallback.")
-    return render_with_reportlab(xlsx_path, out_pdf, title, ref_no), "reportlab"
+            render_with_reportlab(xlsx_path, raw, title, ref_no)
+        finally:
+            if prepared and os.path.exists(prepared):
+                os.remove(prepared)
+    else:
+        render_with_reportlab(xlsx_path, raw, title, ref_no)
+
+    if brand:
+        A.stamp_pdf(raw, out_pdf, ref_no, mode="table")
+        if os.path.exists(raw):
+            os.remove(raw)
+    return out_pdf, eng
 
 
 if __name__ == "__main__":

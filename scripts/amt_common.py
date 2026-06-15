@@ -9,10 +9,12 @@ across every page and every submittal.
 """
 from __future__ import annotations
 
+import io
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.colors import HexColor
+from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
@@ -163,3 +165,70 @@ def text_right(c, x, y, text, font, size, color=BLACK):
     c.setFillColor(color)
     c.drawRightString(x, y, text)
     c.setFillColor(BLACK)
+
+
+# --------------------------------------------------------------------------- #
+# Page-branding overlay (stamp the AMT logo/footer onto already-rendered pages)
+# --------------------------------------------------------------------------- #
+# Space (points) reserved at top/bottom of a GENERATED table page so the stamped
+# header logo and footer banner never sit on top of the table. Kept in sync with
+# the LibreOffice print margins set in render_tables._prepare_xlsx_for_print.
+TABLE_TOP_RESERVE = 84
+TABLE_BOTTOM_RESERVE = 92
+
+
+def _stamp_table(c, pw, ph, ref_no):
+    """Header logo (top-left) + centred contact banner + ref line — for AMT-
+    generated table pages, which reserve top/bottom space for exactly this."""
+    logo_w = min(190.0, pw * 0.34)
+    la = _img_aspect(LOGO_PNG)
+    lh = logo_w * la
+    c.drawImage(LOGO_PNG, LOGO_X, ph - LOGO_TOP_GAP - lh, width=logo_w, height=lh,
+                preserveAspectRatio=True, mask="auto")
+    banner_w = min(300.0, pw * 0.55)
+    bh = banner_w * _img_aspect(BANNER_PNG)
+    c.drawImage(BANNER_PNG, (pw - banner_w) / 2, 8, width=banner_w, height=bh,
+                preserveAspectRatio=True, mask="auto")
+    c.setFont(F_SANS, 8)
+    c.setFillColor(GREY_REF)
+    c.drawRightString(pw - MARGIN_R, bh + 10, f"Ref.: {ref_no}")
+    c.setFillColor(BLACK)
+
+
+def _stamp_appended(c, pw, ph, ref_no):
+    """Small AMT logo (top-right corner) + slim ref footer — for third-party
+    datasheet/diagram pages we cannot reserve margins on, so keep it unobtrusive."""
+    logo_w = min(120.0, pw * 0.22)
+    lh = logo_w * _img_aspect(LOGO_PNG)
+    c.drawImage(LOGO_PNG, pw - logo_w - 12, ph - lh - 12, width=logo_w, height=lh,
+                preserveAspectRatio=True, mask="auto")
+    c.setFont(F_SANS, 7)
+    c.setFillColor(GREY_REF)
+    c.drawString(18, 10, "Advanced Micro Technologies Co. (AMT)")
+    c.drawRightString(pw - 18, 10, f"Ref.: {ref_no}")
+    c.setFillColor(BLACK)
+
+
+def stamp_pdf(in_pdf: str, out_pdf: str, ref_no: str, mode: str = "table") -> str:
+    """Overlay AMT branding on every page of `in_pdf`. mode='table' for AMT-
+    generated table pages, mode='appended' for third-party PDFs. Page count and
+    sizes are preserved."""
+    from pypdf import PdfReader, PdfWriter
+    register_fonts()
+    reader = PdfReader(in_pdf)
+    writer = PdfWriter()
+    draw = _stamp_table if mode == "table" else _stamp_appended
+    for page in reader.pages:
+        pw = float(page.mediabox.width)
+        ph = float(page.mediabox.height)
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=(pw, ph))
+        draw(c, pw, ph, ref_no)
+        c.showPage()
+        c.save()
+        buf.seek(0)
+        page.merge_page(PdfReader(buf).pages[0])
+        writer.add_page(page)
+    with open(out_pdf, "wb") as fh:
+        writer.write(fh)
+    return out_pdf

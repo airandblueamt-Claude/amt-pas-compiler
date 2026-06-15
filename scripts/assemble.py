@@ -21,6 +21,7 @@ import build_chrome as CH
 import render_tables as RT
 import convert_docx as CD
 import normalize as NORM
+import amt_common as A
 from pas_spec import TABLE, APPEND
 
 
@@ -75,6 +76,20 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
                 print(f"  ! normalise failed for {os.path.basename(p)} ({e}); using original size.")
                 normed.append(p)
         parts = normed
+
+    # Brand third-party datasheet/diagram pages with a small AMT logo + ref line
+    # so every page of the submittal carries AMT identity (kept unobtrusive).
+    if cfg.get("brand_appended", True):
+        stamped = []
+        for k, p in enumerate(parts):
+            sp = os.path.join(work, f"sec{no}_brand{k}.pdf")
+            try:
+                A.stamp_pdf(p, sp, ref_disp, mode="appended")
+                stamped.append(sp)
+            except Exception as e:
+                print(f"  ! branding failed for {os.path.basename(p)} ({e}); using unbranded.")
+                stamped.append(p)
+        parts = stamped
     return parts, False
 
 
@@ -120,8 +135,8 @@ def build(manifest: dict, cfg: dict, template: dict | None = None, log=print) ->
     cover = os.path.join(work, "cover.pdf")
     toc = os.path.join(work, "toc.pdf")
     CH.cover_pdf(cfg, cover)
-    CH.toc_pdf(cfg, page_map, template["sections"],
-               template["toc_title_en"], template["toc_title_ar"], toc)
+    toc_rects = CH.toc_pdf(cfg, page_map, template["sections"],
+                           template["toc_title_en"], template["toc_title_ar"], toc)
 
     order = [cover, toc]
     for sec in manifest["sections"]:
@@ -147,6 +162,24 @@ def build(manifest: dict, cfg: dict, template: dict | None = None, log=print) ->
     writer = PdfWriter()
     for p in order:
         writer.append(p)
+
+    # Make the Table of Contents clickable: each row jumps to that section's
+    # first page (cover=index 0, TOC=index 1). page_map is 1-based.
+    try:
+        from pypdf.annotations import Link
+        from pypdf.generic import Fit
+        for (no, x0, y0, x1, y1) in toc_rects:
+            tgt = page_map.get(no)
+            if not tgt:
+                continue
+            writer.add_annotation(
+                page_number=1,
+                annotation=Link(rect=(x0, y0, x1, y1),
+                                target_page_index=tgt - 1, fit=Fit.fit()),
+            )
+    except Exception as e:
+        print(f"  ! could not add clickable TOC links ({e}); TOC text page numbers still apply.")
+
     out_pdf = cfg["output_pdf"]
     os.makedirs(os.path.dirname(os.path.abspath(out_pdf)), exist_ok=True)
     with open(out_pdf, "wb") as fh:

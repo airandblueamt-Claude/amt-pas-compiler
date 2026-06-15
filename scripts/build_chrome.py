@@ -171,6 +171,8 @@ def draw_toc(c, cfg, page_map, sections, toc_title_en, toc_title_ar):
     # adapt row height to the number of sections so they always fit the page
     avail = y - 250
     rh = max(20, min(34, avail / max(len(sections), 1)))
+    total_w = sum(col)
+    rects = []   # (section_no, x0, y0, x1, y1) for clickable links
     for spec in sections:
         row = [[
             {"text": str(spec["no"]), "font": F_EN_B, "size": 10},
@@ -179,9 +181,13 @@ def draw_toc(c, cfg, page_map, sections, toc_title_en, toc_title_ar):
             {"text": f"{page_map.get(spec['no'], ''):02d}" if spec["no"] in page_map else "",
              "font": F_EN_B, "size": 10},
         ]]
+        top = y
         y = draw_grid(c, x, y, col, [rh], row)
+        if spec["no"] in page_map:
+            rects.append((spec["no"], x, y, x + total_w, top))
 
     A.draw_seal(c, PAGE_W / 2 + 90, 235, w=110)
+    return rects
 
 
 # --------------------------------------------------------------------------- #
@@ -282,7 +288,13 @@ def _emit(path, draw_fn):
 
 def cover_pdf(cfg, out):    return _emit(out, lambda c: draw_cover(c, cfg))
 def toc_pdf(cfg, page_map, sections, toc_en, toc_ar, out):
-    return _emit(out, lambda c: draw_toc(c, cfg, page_map, sections, toc_en, toc_ar))
+    """Emit the TOC page and return the clickable row rectangles
+    [(section_no, x0, y0, x1, y1), …] in PDF coordinates."""
+    c = canvas.Canvas(out, pagesize=(PAGE_W, PAGE_H))
+    rects = draw_toc(c, cfg, page_map, sections, toc_en, toc_ar)
+    c.showPage()
+    c.save()
+    return rects
 def divider_pdf(cfg, section, out): return _emit(out, lambda c: draw_divider(c, cfg, section))
 def placeholder_pdf(cfg, section, note, out):
     return _emit(out, lambda c: draw_placeholder(c, cfg, section, note))
