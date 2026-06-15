@@ -76,9 +76,11 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
     if not parts and not appended:
         return [], True   # empty -> caller decides placeholder/skip
 
-    # Fit oversized / off-size pages (e.g. A1 layout drawings) onto A4. With
-    # drawing_fit="native" (matching the sample) drawings keep their original size.
-    fit = cfg.get("drawing_fit", "native")
+    # Fit every appended page (datasheets, certificates, A3/A1 drawings, Letter-
+    # size PDFs …) onto A4 so the whole submittal is one consistent A4 paper size.
+    # "auto" keeps each page's orientation (landscape sheet -> A4 landscape).
+    # Set drawing_fit="native" to keep originals at their own size instead.
+    fit = cfg.get("drawing_fit", "auto")
     if cfg.get("normalize_appended", True) and fit != "native":
         normed = []
         for j, p in enumerate(appended):
