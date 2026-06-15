@@ -47,19 +47,18 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
     doesn't matter. Returns (list_of_pdfs, is_placeholder)."""
     no = sec["no"]
     branded = _is_branded(sec, cfg)
-    parts = []
 
-    # 1) spreadsheets -> rendered table pages (landscape, branded unless excluded)
+    # 1) spreadsheets -> clean portrait table pages (no chrome yet)
+    raw = []
     for i, x in enumerate(sec.get("xlsx_list") or ([sec["xlsx"]] if sec.get("xlsx") else [])):
         out = os.path.join(work, f"sec{no}_table{i}.pdf")
         _, eng = RT.render_table(x, out, sec["en"], ref_disp,
-                                 engine=cfg.get("render_engine", "auto"), brand=branded)
+                                 engine=cfg.get("render_engine", "auto"), brand=False)
         engines.add(eng)
-        parts.append(out)
+        raw.append(out)
 
     # 2) Word docs -> PDF. A heading-only cover ".docx" is redundant with our
     #    generated divider (stale numbering/refs), so it is skipped.
-    converted = []
     for i, d in enumerate(sec["docx"]):
         if cfg.get("drop_cover_docx", True) and CD.is_cover_docx(d):
             print(f"  · §{no}: skipping cover-only doc '{os.path.basename(d)}' "
@@ -68,49 +67,42 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
         out = os.path.join(work, f"sec{no}_docx{i}.pdf")
         _, eng = CD.convert_docx(d, out, ref_disp, engine=cfg.get("render_engine", "auto"))
         engines.add(eng)
-        converted.append(out)
+        raw.append(out)
 
     # 3) appended source PDFs (datasheets, diagrams, …)
-    appended = converted + list(sec["pdfs"])
+    raw += list(sec["pdfs"])
 
-    if not parts and not appended:
+    if not raw:
         return [], True   # empty -> caller decides placeholder/skip
 
-    # Fit every appended page (datasheets, certificates, A3/A1 drawings, Letter-
-    # size PDFs …) onto A4 so the whole submittal is one consistent A4 paper size.
-    # "auto" keeps each page's orientation (landscape sheet -> A4 landscape).
-    # Set drawing_fit="native" to keep originals at their own size instead.
-    fit = cfg.get("drawing_fit", "auto")
-    if cfg.get("normalize_appended", True) and fit != "native":
-        normed = []
-        for j, p in enumerate(appended):
+    # 4) DOCUMENT CONTROL: put every content page on a uniform A4 *portrait* sheet
+    #    (landscape drawings/tables rotated to fit). Branded sections reserve a top/
+    #    bottom margin so the stamped AMT logo + ref line sit clear of the content;
+    #    unbranded third-party sections (Tender/Catalogue/Partnership/Warranty) get
+    #    no stamp. Set cfg["uniform_pages"]=False to keep originals at their size.
+    uniform = cfg.get("uniform_pages", True)
+    top_res = 54 if branded else 0
+    bot_res = 26 if branded else 0
+    parts = []
+    for j, p in enumerate(raw):
+        page = p
+        if uniform:
+            a4 = os.path.join(work, f"sec{no}_a4_{j}.pdf")
             try:
-                if NORM.needs_normalising(p):
-                    out = os.path.join(work, f"sec{no}_norm{j}.pdf")
-                    NORM.normalize_to_a4(p, out, mode=fit)
-                    normed.append(out)
-                else:
-                    normed.append(p)
+                NORM.to_a4_portrait(p, a4, top_reserve=top_res, bottom_reserve=bot_res)
+                page = a4
             except Exception as e:
-                print(f"  ! normalise failed for {os.path.basename(p)} ({e}); using original size.")
-                normed.append(p)
-        appended = normed
-
-    # Brand appended pages with a small AMT logo + ref line — unless this is a
-    # third-party section (Tender / Catalogue / Warranty), which stays unbranded.
-    if branded and cfg.get("brand_appended", True):
-        stamped = []
-        for k, p in enumerate(appended):
-            sp = os.path.join(work, f"sec{no}_brand{k}.pdf")
+                print(f"  ! A4 fit failed for {os.path.basename(p)} ({e}); using original.")
+        if branded and cfg.get("brand_appended", True):
+            sp = os.path.join(work, f"sec{no}_brand{j}.pdf")
             try:
-                A.stamp_pdf(p, sp, ref_disp, mode="appended")
-                stamped.append(sp)
+                A.stamp_pdf(page, sp, ref_disp, mode="appended")
+                page = sp
             except Exception as e:
-                print(f"  ! branding failed for {os.path.basename(p)} ({e}); using unbranded.")
-                stamped.append(p)
-        appended = stamped
+                print(f"  ! branding failed for {os.path.basename(p)} ({e}); unbranded.")
+        parts.append(page)
 
-    return parts + appended, False
+    return parts, False
 
 
 def build(manifest: dict, cfg: dict, template: dict | None = None, log=print) -> dict:

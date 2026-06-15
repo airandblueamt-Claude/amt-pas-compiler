@@ -64,6 +64,35 @@ def normalize_to_a4(src: str, out: str, mode: str = "auto") -> str:
         src_doc.close()
 
 
+def to_a4_portrait(src: str, out: str, top_reserve: float = 0.0,
+                   bottom_reserve: float = 0.0, side: float = 18.0) -> str:
+    """Place EVERY page of `src` onto a uniform A4 *portrait* sheet so the whole
+    submittal is one consistent page size (document-control friendly).
+
+    Landscape pages (wide BOQ tables, A1 single-line diagrams) are rotated 90° so
+    they read on the portrait sheet. Content is scaled to fit (never enlarged) and
+    centred inside the area left after `top_reserve`/`bottom_reserve` (space kept
+    clear for the stamped AMT logo / ref line) and `side` margins. Aspect ratio is
+    always preserved. Returns `out`.
+    """
+    src_doc = fitz.open(src)
+    new = fitz.open()
+    try:
+        cx0, cx1 = side, A4_W - side
+        cy0, cy1 = bottom_reserve + side, A4_H - top_reserve - side
+        rect = fitz.Rect(cx0, cy0, cx1, cy1)
+        for pno in range(src_doc.page_count):
+            sp = src_doc[pno]
+            rot = 90 if sp.rect.width > sp.rect.height else 0
+            page = new.new_page(width=A4_W, height=A4_H)
+            page.show_pdf_page(rect, src_doc, pno, keep_proportion=True, rotate=rot)
+        new.save(out, garbage=3, deflate=True)
+        return out
+    finally:
+        new.close()
+        src_doc.close()
+
+
 if __name__ == "__main__":
     import sys
     print(normalize_to_a4(sys.argv[1], sys.argv[2],

@@ -63,25 +63,23 @@ def have_soffice() -> str | None:
 # instead of overflowing across several pages)
 # --------------------------------------------------------------------------- #
 def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
-    """Return a temp copy of the workbook set to A4 LANDSCAPE, fit-all-columns-to-
-    one-page-wide and centred. Landscape gives wide / Arabic BOQ tables enough room
-    so cells don't shrink into each other. When `branded`, top/bottom margins leave
-    clearance for the stamped AMT logo + footer banner; otherwise normal margins."""
+    """Return a temp copy of the workbook set to A4 PORTRAIT, fit-all-columns-to-
+    one-page-wide and centred, so the table matches the rest of the (portrait)
+    document. Wide tables are scaled to fit; AMT branding is added afterwards in a
+    reserved margin so it never overlaps the table."""
     from openpyxl.worksheet.properties import PageSetupProperties
     from openpyxl.styles import Alignment
     wb = openpyxl.load_workbook(xlsx_path)
     for ws in wb.worksheets:
-        ws.page_setup.orientation = "landscape"     # (#2) landscape tables
+        ws.page_setup.orientation = "portrait"      # uniform portrait document
         ws.page_setup.paperSize = 9                 # A4
         ws.page_setup.fitToWidth = 1                # all columns on one page wide
         ws.page_setup.fitToHeight = 0               # as many pages tall as needed
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-        ws.print_options.horizontalCentered = True  # centre the table (#4)
-        ws.print_options.verticalCentered = True
-        # margins (inches). When branded, reserve room so the stamped header/footer
-        # never overlap the table (#3); otherwise use tidy default margins.
-        ws.page_margins.top = 1.15 if branded else 0.5
-        ws.page_margins.bottom = 1.20 if branded else 0.5
+        ws.print_options.horizontalCentered = True  # centre the table
+        ws.print_options.verticalCentered = False   # top-align so long tables flow
+        ws.page_margins.top = 0.5
+        ws.page_margins.bottom = 0.5
         ws.page_margins.left = 0.45
         ws.page_margins.right = 0.45
         ws.page_margins.header = 0.2
@@ -217,8 +215,8 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
     if ncols == 0:
         rows, ncols, spans, covered = [["(empty sheet)"]], 1, {}, set()
 
-    # A4 landscape (#2) so wide/Arabic tables have room and don't overlap
-    page_w, page_h = PAGE_H, PAGE_W
+    # A4 portrait so the table matches the rest of the document
+    page_w, page_h = PAGE_W, PAGE_H
     content_w = page_w - MARGIN_L - MARGIN_R
     colw = _col_widths(ws, ncols, content_w)
     size = 8
@@ -227,12 +225,12 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
 
     c = canvas.Canvas(out_pdf, pagesize=(page_w, page_h))
     # Reserve top/bottom only when branding will be stamped, so chrome never
-    # overlaps the table (#3); unbranded tables use the whole page.
+    # overlaps the table; unbranded tables use the whole page.
     top_reserve = A.TABLE_TOP_RESERVE if branded else 28
     bottom_reserve = A.TABLE_BOTTOM_RESERVE if branded else 28
     top_y = page_h - top_reserve - 6
     bottom_limit = bottom_reserve + 6
-    x_left = (page_w - sum(colw)) / 2   # centre the table horizontally (#4)
+    x_left = (page_w - sum(colw)) / 2   # centre the table horizontally
     page_no = 1
 
     def row_height(r):
