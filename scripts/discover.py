@@ -71,7 +71,7 @@ def discover(input_dir: str, sections: list | None = None) -> dict:
     for spec in sections:
         sec = dict(no=spec["no"], en=spec["en"], ar=spec["ar"],
                    kind=spec["kind"], optional=spec["optional"],
-                   dir=None, xlsx=None, pdfs=[], docx=[], status="ok")
+                   dir=None, xlsx=None, xlsx_list=[], pdfs=[], docx=[], status="ok")
         sdir = _find_section_dir(input_dir, spec["prefix"])
         sec["dir"] = sdir
 
@@ -82,33 +82,28 @@ def discover(input_dir: str, sections: list | None = None) -> dict:
             manifest["sections"].append(sec)
             continue
 
-        if spec["kind"] == TABLE:
-            xlsx = [p for p in _collect_files(sdir, XLSX_EXTS)]
-            if not xlsx:
-                sec["status"] = "missing-content"
-                manifest["errors"].append(
-                    f"Section {spec['no']} ({spec['en']}): no spreadsheet (.xlsx) found.")
+        # Collect EVERY supported file type regardless of the section's declared
+        # kind. Upload format must not matter: spreadsheets are rendered as tables,
+        # PDF/Word are appended — so a section provided either way always lays out
+        # well (#4 "some docs as PDF, some as Excel; layout always good").
+        xlsx = _collect_files(sdir, XLSX_EXTS)
+        # spreadsheets sitting directly in the section folder come first
+        xlsx.sort(key=lambda p: (os.path.dirname(p) != sdir, os.path.basename(p).lower()))
+        sec["xlsx_list"] = xlsx
+        sec["xlsx"] = xlsx[0] if xlsx else None
+        sec["pdfs"] = _ordered(_collect_files(sdir, PDF_EXTS))
+        sec["docx"] = _ordered(_collect_files(sdir, DOCX_EXTS))
+
+        if not (xlsx or sec["pdfs"] or sec["docx"]):
+            sec["status"] = "empty"
+            if spec["optional"]:
+                manifest["warnings"].append(
+                    f"Section {spec['no']} ({spec['en']}): no documents found — "
+                    f"a placeholder will be inserted.")
             else:
-                # prefer a file directly in the section folder, else first found
-                top = [p for p in xlsx if os.path.dirname(p) == sdir]
-                sec["xlsx"] = (top or xlsx)[0]
-                if len(xlsx) > 1:
-                    manifest["warnings"].append(
-                        f"Section {spec['no']}: {len(xlsx)} spreadsheets found, using "
-                        f"'{os.path.basename(sec['xlsx'])}'.")
-        else:  # APPEND
-            sec["pdfs"] = _ordered(_collect_files(sdir, PDF_EXTS))
-            sec["docx"] = _ordered(_collect_files(sdir, DOCX_EXTS))
-            if not sec["pdfs"] and not sec["docx"]:
-                sec["status"] = "empty"
-                if spec["optional"]:
-                    manifest["warnings"].append(
-                        f"Section {spec['no']} ({spec['en']}): no documents found — "
-                        f"a placeholder will be inserted.")
-                else:
-                    manifest["errors"].append(
-                        f"Section {spec['no']} ({spec['en']}): no documents found — "
-                        f"required section is empty.")
+                manifest["errors"].append(
+                    f"Section {spec['no']} ({spec['en']}): no documents found — "
+                    f"required section is empty.")
 
         manifest["sections"].append(sec)
 
@@ -119,15 +114,14 @@ def format_report(manifest: dict) -> str:
     lines = [f"Input: {manifest['input_dir']}", ""]
     for sec in manifest["sections"]:
         tag = f"  {sec['no']}. {sec['en']}"
-        if sec["kind"] == TABLE:
-            detail = os.path.basename(sec["xlsx"]) if sec["xlsx"] else "— MISSING —"
-        else:
-            parts = []
-            if sec["pdfs"]:
-                parts.append(f"{len(sec['pdfs'])} pdf")
-            if sec["docx"]:
-                parts.append(f"{len(sec['docx'])} docx")
-            detail = ", ".join(parts) if parts else "— empty (placeholder) —"
+        parts = []
+        if sec.get("xlsx_list"):
+            parts.append(f"{len(sec['xlsx_list'])} table")
+        if sec["pdfs"]:
+            parts.append(f"{len(sec['pdfs'])} pdf")
+        if sec["docx"]:
+            parts.append(f"{len(sec['docx'])} docx")
+        detail = ", ".join(parts) if parts else "— empty (placeholder) —"
         lines.append(f"{tag:<58} {detail}")
     if manifest["warnings"]:
         lines += ["", "Warnings:"] + [f"  ! {w}" for w in manifest["warnings"]]

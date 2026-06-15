@@ -29,21 +29,35 @@ def _pdf_pages(path: str) -> int:
     return len(PdfReader(path).pages)
 
 
-def _render_section_content(sec, cfg, ref_disp, work, engines):
-    """Produce a list of PDF file paths for a section's CONTENT (no divider).
-    Returns (list_of_pdfs, is_placeholder)."""
-    no = sec["no"]
-    if sec["kind"] == TABLE:
-        out = os.path.join(work, f"sec{no}_table.pdf")
-        _, eng = RT.render_table(sec["xlsx"], out, sec["en"], ref_disp,
-                                 engine=cfg.get("render_engine", "auto"))
-        engines.add(eng)
-        return [out], False
+# Sections whose CONTENT is a third-party document (the client's Tender BOQ, the
+# manufacturer's Catalogue/datasheet, the vendor's Warranty) — no AMT logo is
+# stamped on these pages. Overridable via cfg["unbranded_sections"].
+DEFAULT_UNBRANDED = [1, 5, 7]
 
-    # APPEND: real Word content (e.g. the warranty letter) is kept and placed
-    # before the PDFs. A heading-only ".docx" (e.g. a "Shop Drawings/Single Line
-    # Diagram" cover sheet) is redundant with our generated section divider and
-    # carries stale numbering/refs, so it is skipped.
+
+def _is_branded(sec, cfg) -> bool:
+    unbranded = cfg.get("unbranded_sections", DEFAULT_UNBRANDED)
+    return sec["no"] not in unbranded
+
+
+def _render_section_content(sec, cfg, ref_disp, work, engines):
+    """Produce the list of content-PDF paths for a section, rendering whatever was
+    provided (spreadsheets -> tables, Word/PDF -> appended) so the upload format
+    doesn't matter. Returns (list_of_pdfs, is_placeholder)."""
+    no = sec["no"]
+    branded = _is_branded(sec, cfg)
+    parts = []
+
+    # 1) spreadsheets -> rendered table pages (landscape, branded unless excluded)
+    for i, x in enumerate(sec.get("xlsx_list") or ([sec["xlsx"]] if sec.get("xlsx") else [])):
+        out = os.path.join(work, f"sec{no}_table{i}.pdf")
+        _, eng = RT.render_table(x, out, sec["en"], ref_disp,
+                                 engine=cfg.get("render_engine", "auto"), brand=branded)
+        engines.add(eng)
+        parts.append(out)
+
+    # 2) Word docs -> PDF. A heading-only cover ".docx" is redundant with our
+    #    generated divider (stale numbering/refs), so it is skipped.
     converted = []
     for i, d in enumerate(sec["docx"]):
         if cfg.get("drop_cover_docx", True) and CD.is_cover_docx(d):
@@ -54,34 +68,36 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
         _, eng = CD.convert_docx(d, out, ref_disp, engine=cfg.get("render_engine", "auto"))
         engines.add(eng)
         converted.append(out)
-    parts = converted + list(sec["pdfs"])
-    if not parts:
+
+    # 3) appended source PDFs (datasheets, diagrams, …)
+    appended = converted + list(sec["pdfs"])
+
+    if not parts and not appended:
         return [], True   # empty -> caller decides placeholder/skip
 
-    # Fit oversized / off-size pages (e.g. A1 layout drawings) onto A4 so the
-    # whole submittal is one consistent paper size. With drawing_fit="native"
-    # (matching the sample document) drawings are appended at original size.
-    mode = cfg.get("drawing_fit", "native")
-    if cfg.get("normalize_appended", True) and mode != "native":
+    # Fit oversized / off-size pages (e.g. A1 layout drawings) onto A4. With
+    # drawing_fit="native" (matching the sample) drawings keep their original size.
+    fit = cfg.get("drawing_fit", "native")
+    if cfg.get("normalize_appended", True) and fit != "native":
         normed = []
-        for j, p in enumerate(parts):
+        for j, p in enumerate(appended):
             try:
                 if NORM.needs_normalising(p):
                     out = os.path.join(work, f"sec{no}_norm{j}.pdf")
-                    NORM.normalize_to_a4(p, out, mode=mode)
+                    NORM.normalize_to_a4(p, out, mode=fit)
                     normed.append(out)
                 else:
                     normed.append(p)
             except Exception as e:
                 print(f"  ! normalise failed for {os.path.basename(p)} ({e}); using original size.")
                 normed.append(p)
-        parts = normed
+        appended = normed
 
-    # Brand third-party datasheet/diagram pages with a small AMT logo + ref line
-    # so every page of the submittal carries AMT identity (kept unobtrusive).
-    if cfg.get("brand_appended", True):
+    # Brand appended pages with a small AMT logo + ref line — unless this is a
+    # third-party section (Tender / Catalogue / Warranty), which stays unbranded.
+    if branded and cfg.get("brand_appended", True):
         stamped = []
-        for k, p in enumerate(parts):
+        for k, p in enumerate(appended):
             sp = os.path.join(work, f"sec{no}_brand{k}.pdf")
             try:
                 A.stamp_pdf(p, sp, ref_disp, mode="appended")
@@ -89,8 +105,9 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
             except Exception as e:
                 print(f"  ! branding failed for {os.path.basename(p)} ({e}); using unbranded.")
                 stamped.append(p)
-        parts = stamped
-    return parts, False
+        appended = stamped
+
+    return parts + appended, False
 
 
 def build(manifest: dict, cfg: dict, template: dict | None = None, log=print) -> dict:

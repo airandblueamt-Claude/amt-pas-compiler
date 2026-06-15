@@ -62,25 +62,27 @@ def have_soffice() -> str | None:
 # Fit-to-page preparation (so wide BOQ sheets scale onto one A4 width, centred,
 # instead of overflowing across several pages)
 # --------------------------------------------------------------------------- #
-def _prepare_xlsx_for_print(xlsx_path: str) -> str:
-    """Return a temp copy of the workbook with every sheet set to: A4 portrait,
-    fit-all-columns-to-one-page-wide, horizontally + vertically centred, with top/
-    bottom margins that leave room for the stamped AMT logo and footer banner."""
+def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
+    """Return a temp copy of the workbook set to A4 LANDSCAPE, fit-all-columns-to-
+    one-page-wide and centred. Landscape gives wide / Arabic BOQ tables enough room
+    so cells don't shrink into each other. When `branded`, top/bottom margins leave
+    clearance for the stamped AMT logo + footer banner; otherwise normal margins."""
     from openpyxl.worksheet.properties import PageSetupProperties
     wb = openpyxl.load_workbook(xlsx_path)
     for ws in wb.worksheets:
-        ws.page_setup.orientation = "portrait"
-        ws.page_setup.paperSize = 9            # A4
-        ws.page_setup.fitToWidth = 1           # all columns on one page wide
-        ws.page_setup.fitToHeight = 0          # as many pages tall as needed
+        ws.page_setup.orientation = "landscape"     # (#2) landscape tables
+        ws.page_setup.paperSize = 9                 # A4
+        ws.page_setup.fitToWidth = 1                # all columns on one page wide
+        ws.page_setup.fitToHeight = 0               # as many pages tall as needed
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-        ws.print_options.horizontalCentered = True   # centre the table (#4)
+        ws.print_options.horizontalCentered = True  # centre the table (#4)
         ws.print_options.verticalCentered = True
-        # margins are in inches; reserve space for the stamped header/footer
-        ws.page_margins.top = 1.18
-        ws.page_margins.bottom = 1.32
-        ws.page_margins.left = 0.4
-        ws.page_margins.right = 0.4
+        # margins (inches). When branded, reserve room so the stamped header/footer
+        # never overlap the table (#3); otherwise use tidy default margins.
+        ws.page_margins.top = 1.15 if branded else 0.5
+        ws.page_margins.bottom = 1.20 if branded else 0.5
+        ws.page_margins.left = 0.45
+        ws.page_margins.right = 0.45
         ws.page_margins.header = 0.2
         ws.page_margins.footer = 0.2
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
@@ -147,7 +149,7 @@ def _sheet_matrix(ws):
     return rows, ncols, spans, covered
 
 
-def _col_widths(ws, ncols):
+def _col_widths(ws, ncols, content_w=CONTENT_W):
     """Approximate column widths (points) from Excel column dimensions, scaled
     to the printable content width."""
     widths = []
@@ -157,7 +159,7 @@ def _col_widths(ws, ncols):
         w = dim.width if dim and dim.width else 10
         widths.append(max(w, 4))
     total = sum(widths)
-    scale = CONTENT_W / total
+    scale = content_w / total
     return [w * scale for w in widths]
 
 
@@ -178,7 +180,8 @@ def _wrap(text, font, size, max_w, is_ar):
     return lines
 
 
-def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str) -> str:
+def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
+                          branded: bool = True) -> str:
     A.register_fonts()
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     # pick the first non-empty, prefer a non-Arabic-named sheet (English layout)
@@ -191,24 +194,23 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
     if ncols == 0:
         rows, ncols, spans, covered = [["(empty sheet)"]], 1, {}, set()
 
-    colw = _col_widths(ws, ncols)
+    # A4 landscape (#2) so wide/Arabic tables have room and don't overlap
+    page_w, page_h = PAGE_H, PAGE_W
+    content_w = page_w - MARGIN_L - MARGIN_R
+    colw = _col_widths(ws, ncols, content_w)
     size = 8
     pad = 3
     line_h = size + 2
 
-    c = canvas.Canvas(out_pdf, pagesize=(PAGE_W, PAGE_H))
-    # Render inside the area reserved for the stamped AMT logo (top) and footer
-    # banner (bottom); branding is overlaid afterwards by amt_common.stamp_pdf.
-    top_y = PAGE_H - A.TABLE_TOP_RESERVE - 6
-    bottom_limit = A.TABLE_BOTTOM_RESERVE + 6
+    c = canvas.Canvas(out_pdf, pagesize=(page_w, page_h))
+    # Reserve top/bottom only when branding will be stamped, so chrome never
+    # overlaps the table (#3); unbranded tables use the whole page.
+    top_reserve = A.TABLE_TOP_RESERVE if branded else 28
+    bottom_reserve = A.TABLE_BOTTOM_RESERVE if branded else 28
+    top_y = page_h - top_reserve - 6
+    bottom_limit = bottom_reserve + 6
+    x_left = (page_w - sum(colw)) / 2   # centre the table horizontally (#4)
     page_no = 1
-
-    def page_header():
-        # title is shown on the section divider + the stamped logo; keep table clean
-        pass
-
-    def page_footer(pn):
-        pass
 
     def row_height(r):
         h = line_h + 2 * pad
@@ -224,20 +226,17 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
             font = (F_AR if is_ar else F_EN)
             nlines = len(_wrap(txt, font, size, w, is_ar))
             h = max(h, nlines * line_h + 2 * pad)
-        return min(h, PAGE_H - 140)   # never taller than a page
+        return min(h, page_h - 140)   # never taller than a page
 
-    page_header()
     y = top_y
     is_header_row = True
     for r in range(len(rows)):
         rh = row_height(r)
         if y - rh < bottom_limit:
-            page_footer(page_no)
             c.showPage()
             page_no += 1
-            page_header()
             y = top_y
-        x = MARGIN_L
+        x = x_left
         for cidx in range(ncols):
             if (r, cidx) in covered:
                 x += colw[cidx]
@@ -273,7 +272,6 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
         y -= rh
         is_header_row = False
 
-    page_footer(page_no)
     c.showPage()
     c.save()
     return out_pdf
@@ -284,10 +282,11 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
 # --------------------------------------------------------------------------- #
 def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
                  engine: str = "auto", brand: bool = True) -> tuple[str, str]:
-    """Render xlsx -> branded PDF table pages. Returns (out_pdf, engine_used).
+    """Render xlsx -> A4 landscape PDF table pages. Returns (out_pdf, engine_used).
 
-    The sheet is scaled to fit one A4 width and centred, then the AMT logo +
-    footer banner are stamped on each page (unless brand=False)."""
+    The sheet is scaled to fit one page wide and centred. When brand=True the AMT
+    logo + footer banner are stamped on each page (sections like the Tender BOQ,
+    Catalogue and Warranty pass brand=False so no AMT logo appears on them)."""
     soffice = have_soffice()
     use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
 
@@ -304,19 +303,19 @@ def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
             raise RuntimeError("render_engine=libreoffice but soffice not found on PATH.")
         prepared = None
         try:
-            prepared = _prepare_xlsx_for_print(xlsx_path)
+            prepared = _prepare_xlsx_for_print(xlsx_path, branded=brand)
             render_with_soffice(prepared, raw, soffice)
             eng = "libreoffice"
         except Exception as e:
             if engine == "libreoffice":
                 raise
             print(f"  ! LibreOffice failed ({e}); using reportlab fallback.")
-            render_with_reportlab(xlsx_path, raw, title, ref_no)
+            render_with_reportlab(xlsx_path, raw, title, ref_no, branded=brand)
         finally:
             if prepared and os.path.exists(prepared):
                 os.remove(prepared)
     else:
-        render_with_reportlab(xlsx_path, raw, title, ref_no)
+        render_with_reportlab(xlsx_path, raw, title, ref_no, branded=brand)
 
     if brand:
         A.stamp_pdf(raw, out_pdf, ref_no, mode="table")
