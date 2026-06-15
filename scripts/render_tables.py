@@ -68,6 +68,7 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
     so cells don't shrink into each other. When `branded`, top/bottom margins leave
     clearance for the stamped AMT logo + footer banner; otherwise normal margins."""
     from openpyxl.worksheet.properties import PageSetupProperties
+    from openpyxl.styles import Alignment
     wb = openpyxl.load_workbook(xlsx_path)
     for ws in wb.worksheets:
         ws.page_setup.orientation = "landscape"     # (#2) landscape tables
@@ -85,6 +86,28 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
         ws.page_margins.right = 0.45
         ws.page_margins.header = 0.2
         ws.page_margins.footer = 0.2
+
+        # Wrap every cell and DROP manual row heights so each row auto-grows to fit
+        # its (often multi-line Arabic) content. Fixed/too-small row heights are the
+        # cause of long descriptions overflowing and overlapping neighbouring rows.
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value in (None, ""):
+                    continue
+                try:
+                    al = cell.alignment
+                    cell.alignment = Alignment(
+                        horizontal=al.horizontal,
+                        vertical="center",
+                        wrap_text=True,
+                        text_rotation=al.text_rotation or 0,
+                        reading_order=al.reading_order or 0,
+                        indent=al.indent or 0,
+                    )
+                except (AttributeError, TypeError):
+                    pass  # merged-cell phantoms / styles we can't touch
+        for rd in list(ws.row_dimensions.values()):
+            rd.height = None   # auto-fit row height to the wrapped content
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)

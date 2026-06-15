@@ -29,10 +29,11 @@ def _pdf_pages(path: str) -> int:
     return len(PdfReader(path).pages)
 
 
-# Sections whose CONTENT is a third-party document (the client's Tender BOQ, the
-# manufacturer's Catalogue/datasheet, the vendor's Warranty) — no AMT logo is
-# stamped on these pages. Overridable via cfg["unbranded_sections"].
-DEFAULT_UNBRANDED = [1, 5, 7]
+# Sections whose CONTENT is a third-party document — the client's Tender BOQ (1),
+# the manufacturer's Catalogue/datasheet (5), the vendor's Partnership certificate
+# (6) and Warranty (7) — get NO AMT logo stamped. Overridable via
+# cfg["unbranded_sections"].
+DEFAULT_UNBRANDED = [1, 5, 6, 7]
 
 
 def _is_branded(sec, cfg) -> bool:
