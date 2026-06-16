@@ -79,16 +79,20 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
 
     # 4) DOCUMENT CONTROL: put every content page on a uniform A4 *portrait* sheet
     #    WITHOUT shrinking — pages already A4 pass through untouched at full size;
-    #    landscape drawings/tables are rotated to fit. Reference pages (datasheets,
-    #    certificates, drawings) are NOT stamped — best practice keeps third-party
-    #    documents clean; AMT identity is carried by the branded section divider in
-    #    front of them. Only AMT-generated tables carry a logo (added above, in a
-    #    reserved band). cfg["uniform_pages"]=False keeps originals at their size.
+    #    landscape pages are rotated to fit. EXCEPTION: drawing sections (the Layout
+    #    & Single Line Diagram, §8) keep their NATIVE size (A1/A3 fold-out sheets are
+    #    meant to stay large) — controlled by cfg["native_sections"], default [8].
+    #    Reference pages (datasheets, certificates, drawings) are NOT stamped — best
+    #    practice keeps third-party documents clean; AMT identity comes from the
+    #    branded section divider in front of them. cfg["uniform_pages"]=False keeps
+    #    everything at its own size.
     uniform = cfg.get("uniform_pages", True)
+    native_sections = cfg.get("native_sections", [8])
+    keep_native = no in native_sections
     parts = []
     for j, p in enumerate(raw):
         page = p
-        if uniform:
+        if uniform and not keep_native:
             a4 = os.path.join(work, f"sec{no}_a4_{j}.pdf")
             try:
                 NORM.to_a4_portrait(p, a4)

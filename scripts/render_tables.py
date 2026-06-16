@@ -117,16 +117,36 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
 # --------------------------------------------------------------------------- #
 # LibreOffice engine
 # --------------------------------------------------------------------------- #
+# PDF-export filter that keeps embedded reference images sharp: lossless
+# compression and NO resolution down-sampling (LibreOffice otherwise drops images
+# to ~96–150 dpi, which makes product photos look blurry).
+_PDF_HQ_FILTER = (
+    'pdf:calc_pdf_Export:'
+    '{"UseLosslessCompression":{"type":"boolean","value":"true"},'
+    '"ReduceImageResolution":{"type":"boolean","value":"false"},'
+    '"MaxImageResolution":{"type":"long","value":"600"}}'
+)
+
+
 def render_with_soffice(xlsx_path: str, out_pdf: str, soffice: str) -> str:
     outdir = tempfile.mkdtemp(prefix="amt_lo_")
     # A dedicated profile dir avoids clashes with a running LibreOffice instance.
     profile = tempfile.mkdtemp(prefix="amt_loprof_")
-    cmd = [soffice, "--headless", "--nologo", "--nofirststartwizard",
-           f"-env:UserInstallation=file://{profile}",
-           "--convert-to", "pdf", "--outdir", outdir, xlsx_path]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+
+    def _run(convert_to):
+        cmd = [soffice, "--headless", "--nologo", "--nofirststartwizard",
+               f"-env:UserInstallation=file://{profile}",
+               "--convert-to", convert_to, "--outdir", outdir, xlsx_path]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+
     base = os.path.splitext(os.path.basename(xlsx_path))[0] + ".pdf"
     produced = os.path.join(outdir, base)
+    try:
+        _run(_PDF_HQ_FILTER)        # high-quality, sharp images
+        if not os.path.exists(produced):
+            _run("pdf")             # fall back to the plain filter
+    except subprocess.CalledProcessError:
+        _run("pdf")
     if not os.path.exists(produced):
         raise RuntimeError(f"LibreOffice did not produce {produced}")
     shutil.move(produced, out_pdf)
