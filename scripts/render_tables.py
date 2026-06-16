@@ -78,8 +78,10 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
         ws.print_options.horizontalCentered = True  # centre the table
         ws.print_options.verticalCentered = False   # top-align so long tables flow
-        ws.page_margins.top = 0.5
-        ws.page_margins.bottom = 0.5
+        # When the page will carry the AMT header logo + footer ref, reserve a
+        # top/bottom band (inches) so they sit clear of the table — never overlap.
+        ws.page_margins.top = 1.05 if branded else 0.5
+        ws.page_margins.bottom = 0.75 if branded else 0.5
         ws.page_margins.left = 0.45
         ws.page_margins.right = 0.45
         ws.page_margins.header = 0.2
@@ -339,7 +341,8 @@ def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
         render_with_reportlab(xlsx_path, raw, title, ref_no, branded=brand)
 
     if brand:
-        A.stamp_pdf(raw, out_pdf, ref_no, mode="table")
+        # light header logo + footer ref, placed in the reserved top/bottom band
+        A.stamp_pdf(raw, out_pdf, ref_no, mode="appended")
         if os.path.exists(raw):
             os.remove(raw)
     return out_pdf, eng

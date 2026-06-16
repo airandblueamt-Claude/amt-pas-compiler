@@ -48,12 +48,14 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
     no = sec["no"]
     branded = _is_branded(sec, cfg)
 
-    # 1) spreadsheets -> clean portrait table pages (no chrome yet)
+    # 1) spreadsheets -> AMT table pages. render_table reserves a header/footer band
+    #    and (when branded) stamps the light AMT logo + ref into it, so branding
+    #    never overlaps the table.
     raw = []
     for i, x in enumerate(sec.get("xlsx_list") or ([sec["xlsx"]] if sec.get("xlsx") else [])):
         out = os.path.join(work, f"sec{no}_table{i}.pdf")
         _, eng = RT.render_table(x, out, sec["en"], ref_disp,
-                                 engine=cfg.get("render_engine", "auto"), brand=False)
+                                 engine=cfg.get("render_engine", "auto"), brand=branded)
         engines.add(eng)
         raw.append(out)
 
@@ -77,10 +79,11 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
 
     # 4) DOCUMENT CONTROL: put every content page on a uniform A4 *portrait* sheet
     #    WITHOUT shrinking — pages already A4 pass through untouched at full size;
-    #    landscape drawings/tables are rotated to fit. Branded sections get a small
-    #    AMT logo + ref line in the corner; unbranded third-party sections
-    #    (Tender/Catalogue/Partnership/Warranty) get no stamp. cfg["uniform_pages"]
-    #    =False keeps originals at their own size.
+    #    landscape drawings/tables are rotated to fit. Reference pages (datasheets,
+    #    certificates, drawings) are NOT stamped — best practice keeps third-party
+    #    documents clean; AMT identity is carried by the branded section divider in
+    #    front of them. Only AMT-generated tables carry a logo (added above, in a
+    #    reserved band). cfg["uniform_pages"]=False keeps originals at their size.
     uniform = cfg.get("uniform_pages", True)
     parts = []
     for j, p in enumerate(raw):
@@ -92,13 +95,6 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
                 page = a4
             except Exception as e:
                 print(f"  ! A4 fit failed for {os.path.basename(p)} ({e}); using original.")
-        if branded and cfg.get("brand_appended", True):
-            sp = os.path.join(work, f"sec{no}_brand{j}.pdf")
-            try:
-                A.stamp_pdf(page, sp, ref_disp, mode="appended")
-                page = sp
-            except Exception as e:
-                print(f"  ! branding failed for {os.path.basename(p)} ({e}); unbranded.")
         parts.append(page)
 
     return parts, False
