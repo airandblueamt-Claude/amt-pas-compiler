@@ -87,27 +87,32 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
         ws.page_margins.header = 0.2
         ws.page_margins.footer = 0.2
 
-        # Wrap every cell and DROP manual row heights so each row auto-grows to fit
-        # its (often multi-line Arabic) content. Fixed/too-small row heights are the
-        # cause of long descriptions overflowing and overlapping neighbouring rows.
-        for row in ws.iter_rows():
-            for cell in row:
-                if cell.value in (None, ""):
-                    continue
-                try:
-                    al = cell.alignment
-                    cell.alignment = Alignment(
-                        horizontal=al.horizontal,
-                        vertical="center",
-                        wrap_text=True,
-                        text_rotation=al.text_rotation or 0,
-                        reading_order=al.reading_order or 0,
-                        indent=al.indent or 0,
-                    )
-                except (AttributeError, TypeError):
-                    pass  # merged-cell phantoms / styles we can't touch
-        for rd in list(ws.row_dimensions.values()):
-            rd.height = None   # auto-fit row height to the wrapped content
+        # On sheets WITHOUT embedded images, wrap every cell and drop manual row
+        # heights so each row auto-grows to fit its (often multi-line Arabic)
+        # content — this fixes long descriptions overflowing into neighbouring rows.
+        # On sheets WITH images (e.g. a "Reference Image" material sheet) we must
+        # NOT touch row heights/alignment: the images are sized to their rows, and
+        # collapsing the rows squashes the pictures. Their layout is kept intact so
+        # the reference images render at full size and stay sharp.
+        if not getattr(ws, "_images", None):
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value in (None, ""):
+                        continue
+                    try:
+                        al = cell.alignment
+                        cell.alignment = Alignment(
+                            horizontal=al.horizontal,
+                            vertical="center",
+                            wrap_text=True,
+                            text_rotation=al.text_rotation or 0,
+                            reading_order=al.reading_order or 0,
+                            indent=al.indent or 0,
+                        )
+                    except (AttributeError, TypeError):
+                        pass  # merged-cell phantoms / styles we can't touch
+            for rd in list(ws.row_dimensions.values()):
+                rd.height = None   # auto-fit row height to the wrapped content
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)
