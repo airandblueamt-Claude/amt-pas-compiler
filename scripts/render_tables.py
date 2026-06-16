@@ -101,36 +101,25 @@ def _rows_with_images(ws) -> set:
     return rows
 
 
-def _estimate_row_height(ws, r, colw_pt, default_fs=11) -> float:
-    """Estimate the height (points) a row needs for its wrapped text, so we can grow
-    too-short image rows. Generous padding keeps text from clipping after scaling."""
-    A.register_fonts()
-    max_h = default_fs + 8
+def _estimate_row_height(ws, r, colw_pt, fs=TABLE_FONT_SIZE) -> float:
+    """Estimate (generously) the height in points a row needs for its wrapped text,
+    so image rows are grown enough that text never overlaps. Over-estimating only
+    adds whitespace, so this is deliberately conservative (assumes narrow lines)."""
+    max_h = fs + 10
     for cell in ws[r]:
         v = cell.value
         if v in (None, ""):
             continue
-        fs = (getattr(cell.font, "size", None) or default_fs)
-        cw = max(colw_pt.get(cell.column, 60) - 6, 12)
+        cw = max(colw_pt.get(cell.column, 60) - 8, 14)
         s = str(v)
-        is_ar = has_arabic(s)
-        font = F_AR if is_ar else F_EN
-        words = s.split() or [s]
-        lines, cur = 1, ""
-        for w in words:
-            trial = (cur + " " + w).strip()
-            disp = ar(trial) if is_ar else trial
-            try:
-                width = stringWidth(disp, font, fs)
-            except Exception:
-                width = len(disp) * fs * 0.5
-            if width <= cw:
-                cur = trial
-            else:
-                lines += 1
-                cur = w
-        max_h = max(max_h, lines * (fs + 4) + 8)
-    return max_h * 1.1   # 10% safety so nothing clips after fit-scaling
+        # conservative chars-per-line (Arabic glyphs run wider -> fewer per line)
+        glyph = fs * (0.62 if has_arabic(s) else 0.52)
+        cpl = max(int(cw / glyph), 1)
+        lines = 0
+        for part in s.split("\n"):
+            lines += max(1, -(-len(part) // cpl))     # ceil division
+        max_h = max(max_h, lines * fs * 1.5 + 12)
+    return max_h * 1.15   # safety so nothing overlaps after fit-scaling
 
 
 def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
