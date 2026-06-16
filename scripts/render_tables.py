@@ -62,6 +62,71 @@ def have_soffice() -> str | None:
 # Fit-to-page preparation (so wide BOQ sheets scale onto one A4 width, centred,
 # instead of overflowing across several pages)
 # --------------------------------------------------------------------------- #
+def _col_points(ws) -> dict:
+    """Column index (1-based) -> width in points, from the sheet's column widths."""
+    out = {}
+    for i in range(1, (ws.max_column or 0) + 1):
+        letter = openpyxl.utils.get_column_letter(i)
+        dim = ws.column_dimensions.get(letter)
+        chars = dim.width if dim and dim.width else 8.43
+        out[i] = (chars * 7 + 5) * 0.75   # Excel char-width -> px -> points
+    return out
+
+
+def _rows_with_images(ws) -> set:
+    """1-based row numbers that contain (or are spanned by) an embedded image."""
+    rows = set()
+    for img in (getattr(ws, "_images", None) or []):
+        try:
+            a = img.anchor
+            frm = getattr(a, "_from", None)
+            if frm is not None:
+                r0 = frm.row
+                to = getattr(a, "to", None) or getattr(a, "_to", None)
+                r1 = to.row if to is not None else r0
+                for rr in range(r0, r1 + 1):
+                    rows.add(rr + 1)                 # anchors are 0-based
+            elif isinstance(a, str):
+                m = re.search(r"(\d+)", a)
+                if m:
+                    rows.add(int(m.group(1)))
+        except Exception:
+            pass
+    return rows
+
+
+def _estimate_row_height(ws, r, colw_pt, default_fs=11) -> float:
+    """Estimate the height (points) a row needs for its wrapped text, so we can grow
+    too-short image rows. Generous padding keeps text from clipping after scaling."""
+    A.register_fonts()
+    max_h = default_fs + 8
+    for cell in ws[r]:
+        v = cell.value
+        if v in (None, ""):
+            continue
+        fs = (getattr(cell.font, "size", None) or default_fs)
+        cw = max(colw_pt.get(cell.column, 60) - 6, 12)
+        s = str(v)
+        is_ar = has_arabic(s)
+        font = F_AR if is_ar else F_EN
+        words = s.split() or [s]
+        lines, cur = 1, ""
+        for w in words:
+            trial = (cur + " " + w).strip()
+            disp = ar(trial) if is_ar else trial
+            try:
+                width = stringWidth(disp, font, fs)
+            except Exception:
+                width = len(disp) * fs * 0.5
+            if width <= cw:
+                cur = trial
+            else:
+                lines += 1
+                cur = w
+        max_h = max(max_h, lines * (fs + 4) + 8)
+    return max_h * 1.1   # 10% safety so nothing clips after fit-scaling
+
+
 def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
     """Return a temp copy of the workbook set to A4 PORTRAIT, fit-all-columns-to-
     one-page-wide and centred, so the table matches the rest of the (portrait)
@@ -78,41 +143,45 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
         ws.print_options.horizontalCentered = True  # centre the table
         ws.print_options.verticalCentered = False   # top-align so long tables flow
-        # When the page will carry the AMT header logo + footer ref, reserve a
-        # top/bottom band (inches) so they sit clear of the table — never overlap.
-        ws.page_margins.top = 1.05 if branded else 0.5
-        ws.page_margins.bottom = 0.75 if branded else 0.5
+        # Reserve a top band (inches) for the AMT header logo so it never overlaps
+        # the table. No footer band needed (the divider carries the reference).
+        ws.page_margins.top = 1.15 if branded else 0.5
+        ws.page_margins.bottom = 0.5
         ws.page_margins.left = 0.45
         ws.page_margins.right = 0.45
         ws.page_margins.header = 0.2
         ws.page_margins.footer = 0.2
 
-        # On sheets WITHOUT embedded images, wrap every cell and drop manual row
-        # heights so each row auto-grows to fit its (often multi-line Arabic)
-        # content — this fixes long descriptions overflowing into neighbouring rows.
-        # On sheets WITH images (e.g. a "Reference Image" material sheet) we must
-        # NOT touch row heights/alignment: the images are sized to their rows, and
-        # collapsing the rows squashes the pictures. Their layout is kept intact so
-        # the reference images render at full size and stay sharp.
-        if not getattr(ws, "_images", None):
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value in (None, ""):
-                        continue
-                    try:
-                        al = cell.alignment
-                        cell.alignment = Alignment(
-                            horizontal=al.horizontal,
-                            vertical="center",
-                            wrap_text=True,
-                            text_rotation=al.text_rotation or 0,
-                            reading_order=al.reading_order or 0,
-                            indent=al.indent or 0,
-                        )
-                    except (AttributeError, TypeError):
-                        pass  # merged-cell phantoms / styles we can't touch
-            for rd in list(ws.row_dimensions.values()):
-                rd.height = None   # auto-fit row height to the wrapped content
+        # Make every cell WRAP (so long descriptions never get clipped horizontally),
+        # then size rows so text always fits — fixing both vertical overlap and
+        # half-shown text:
+        #   * rows WITHOUT an image  -> clear the height so LibreOffice auto-fits the
+        #     wrapped text exactly;
+        #   * rows WITH an image     -> grow the row to the taller of (its current
+        #     height, the text it needs) so the picture is never squashed AND its
+        #     text isn't clipped.
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value in (None, ""):
+                    continue
+                try:
+                    al = cell.alignment
+                    cell.alignment = Alignment(
+                        horizontal=al.horizontal,
+                        vertical=al.vertical or "center",
+                        wrap_text=True,
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    pass  # merged-cell phantoms / styles we can't touch
+
+        colw_pt = _col_points(ws)
+        image_rows = _rows_with_images(ws)
+        for r in range(1, (ws.max_row or 0) + 1):
+            if r in image_rows:
+                existing = ws.row_dimensions[r].height or 0
+                ws.row_dimensions[r].height = max(existing, _estimate_row_height(ws, r, colw_pt))
+            else:
+                ws.row_dimensions[r].height = None   # auto-fit to wrapped text
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)
@@ -366,8 +435,8 @@ def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
         render_with_reportlab(xlsx_path, raw, title, ref_no, branded=brand)
 
     if brand:
-        # light header logo + footer ref, placed in the reserved top/bottom band
-        A.stamp_pdf(raw, out_pdf, ref_no, mode="appended")
+        # AMT logo top-left in the reserved top band (matches every other page)
+        A.stamp_pdf(raw, out_pdf, ref_no, mode="header")
         if os.path.exists(raw):
             os.remove(raw)
     return out_pdf, eng

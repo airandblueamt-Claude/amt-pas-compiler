@@ -40,10 +40,11 @@ MARGIN_L = 40
 MARGIN_R = 40
 CONTENT_W = PAGE_W - MARGIN_L - MARGIN_R
 
-# Header logo box (top-left)
+# Header logo box (top-left). Sized by a target HEIGHT so any logo aspect works
+# (the AMT lockup is a stacked diamond + bilingual wordmark).
 LOGO_X = 38
-LOGO_W = 215                              # aspect preserved from the asset
-LOGO_TOP_GAP = 18                         # gap from page top to logo top
+LOGO_H = 56                               # target header-logo height (points)
+LOGO_TOP_GAP = 16                         # gap from page top to logo top
 
 # Footer banner (full width, bottom)
 BANNER_X = 16
@@ -105,11 +106,12 @@ def _img_aspect(path: str) -> float:
 
 
 def draw_header_logo(c) -> float:
-    """Draw the AMT logo top-left. Returns the y of the logo bottom edge."""
-    aspect = _img_aspect(LOGO_PNG)
-    h = LOGO_W * aspect
+    """Draw the AMT logo top-left, sized to LOGO_H tall. Returns the logo bottom y."""
+    aspect = _img_aspect(LOGO_PNG)          # h / w
+    h = LOGO_H
+    w = h / aspect
     y = PAGE_H - LOGO_TOP_GAP - h
-    c.drawImage(LOGO_PNG, LOGO_X, y, width=LOGO_W, height=h,
+    c.drawImage(LOGO_PNG, LOGO_X, y, width=w, height=h,
                 preserveAspectRatio=True, mask="auto")
     return y
 
@@ -177,47 +179,26 @@ TABLE_TOP_RESERVE = 84
 TABLE_BOTTOM_RESERVE = 92
 
 
-def _stamp_table(c, pw, ph, ref_no):
-    """Header logo (top-left) + centred contact banner + ref line — for AMT-
-    generated table pages, which reserve top/bottom space for exactly this."""
-    logo_w = min(190.0, pw * 0.34)
-    la = _img_aspect(LOGO_PNG)
-    lh = logo_w * la
-    c.drawImage(LOGO_PNG, LOGO_X, ph - LOGO_TOP_GAP - lh, width=logo_w, height=lh,
+def _stamp_header(c, pw, ph, ref_no):
+    """AMT logo, top-LEFT, sized to LOGO_H — matches the cover/TOC/divider header so
+    every page is consistent. No footer ref (the section divider already carries the
+    reference), which also avoids a duplicate ref where the source sheet has its own.
+    The page reserves a top band so this never overlaps the content."""
+    aspect = _img_aspect(LOGO_PNG)          # h / w
+    h = LOGO_H
+    w = h / aspect
+    c.drawImage(LOGO_PNG, LOGO_X, ph - LOGO_TOP_GAP - h, width=w, height=h,
                 preserveAspectRatio=True, mask="auto")
-    banner_w = min(300.0, pw * 0.55)
-    bh = banner_w * _img_aspect(BANNER_PNG)
-    c.drawImage(BANNER_PNG, (pw - banner_w) / 2, 8, width=banner_w, height=bh,
-                preserveAspectRatio=True, mask="auto")
-    c.setFont(F_SANS, 8)
-    c.setFillColor(GREY_REF)
-    c.drawRightString(pw - MARGIN_R, bh + 10, f"Ref.: {ref_no}")
-    c.setFillColor(BLACK)
 
 
-def _stamp_appended(c, pw, ph, ref_no):
-    """Small AMT logo (top-right corner) + slim ref footer — for third-party
-    datasheet/diagram pages we cannot reserve margins on, so keep it unobtrusive."""
-    logo_w = min(120.0, pw * 0.22)
-    lh = logo_w * _img_aspect(LOGO_PNG)
-    c.drawImage(LOGO_PNG, pw - logo_w - 12, ph - lh - 12, width=logo_w, height=lh,
-                preserveAspectRatio=True, mask="auto")
-    c.setFont(F_SANS, 7)
-    c.setFillColor(GREY_REF)
-    c.drawString(18, 10, "Advanced Micro Technologies Co. (AMT)")
-    c.drawRightString(pw - 18, 10, f"Ref.: {ref_no}")
-    c.setFillColor(BLACK)
-
-
-def stamp_pdf(in_pdf: str, out_pdf: str, ref_no: str, mode: str = "table") -> str:
-    """Overlay AMT branding on every page of `in_pdf`. mode='table' for AMT-
-    generated table pages, mode='appended' for third-party PDFs. Page count and
-    sizes are preserved."""
+def stamp_pdf(in_pdf: str, out_pdf: str, ref_no: str, mode: str = "header") -> str:
+    """Overlay the AMT header logo (top-left) on every page of `in_pdf`. Page count
+    and sizes are preserved."""
     from pypdf import PdfReader, PdfWriter
     register_fonts()
     reader = PdfReader(in_pdf)
     writer = PdfWriter()
-    draw = _stamp_table if mode == "table" else _stamp_appended
+    draw = _stamp_header
     for page in reader.pages:
         pw = float(page.mediabox.width)
         ph = float(page.mediabox.height)
