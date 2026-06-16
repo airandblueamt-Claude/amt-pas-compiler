@@ -29,6 +29,12 @@ from amt_common import (PAGE_W, PAGE_H, MARGIN_L, MARGIN_R, CONTENT_W,
 
 _ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
 
+# Every BOQ/material table is re-typeset in ONE font + size for a clean, uniform,
+# legible look. Liberation Sans (the Arial metric clone) is always present with
+# LibreOffice and Arabic falls back to an installed Arabic font automatically.
+TABLE_FONT = "Liberation Sans"
+TABLE_FONT_SIZE = 10
+
 
 def has_arabic(s: str) -> bool:
     return bool(_ARABIC_RE.search(s or ""))
@@ -133,7 +139,7 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
     document. Wide tables are scaled to fit; AMT branding is added afterwards in a
     reserved margin so it never overlaps the table."""
     from openpyxl.worksheet.properties import PageSetupProperties
-    from openpyxl.styles import Alignment
+    from openpyxl.styles import Alignment, Font
     wb = openpyxl.load_workbook(xlsx_path)
     for ws in wb.worksheets:
         ws.page_setup.orientation = "portrait"      # uniform portrait document
@@ -173,6 +179,15 @@ def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
                     )
                 except (AttributeError, TypeError, ValueError):
                     pass  # merged-cell phantoms / styles we can't touch
+                # Normalise to ONE clean font + size so the whole table is uniform
+                # and legible (keeps bold for headers, colour for the header band,
+                # and Arabic renders via font substitution).
+                try:
+                    f = cell.font
+                    cell.font = Font(name=TABLE_FONT, size=TABLE_FONT_SIZE,
+                                     bold=f.bold, italic=f.italic, color=f.color)
+                except (AttributeError, TypeError, ValueError):
+                    pass
 
         colw_pt = _col_points(ws)
         image_rows = _rows_with_images(ws)

@@ -45,6 +45,9 @@ CONTENT_W = PAGE_W - MARGIN_L - MARGIN_R
 LOGO_X = 38
 LOGO_H = 56                               # target header-logo height (points)
 LOGO_TOP_GAP = 16                         # gap from page top to logo top
+# Reserved top strip on generated table pages so the stamped logo never overlaps
+# the table (logo gap + logo height + breathing room).
+HEADER_BAND = LOGO_TOP_GAP + LOGO_H + 14
 
 # Footer banner (full width, bottom)
 BANNER_X = 16

@@ -64,15 +64,16 @@ def normalize_to_a4(src: str, out: str, mode: str = "auto") -> str:
         src_doc.close()
 
 
-def to_a4_portrait(src: str, out: str, side: float = 0.0) -> str:
-    """Make every page of `src` a uniform A4 *portrait* sheet WITHOUT shrinking
-    content unnecessarily.
+def to_a4_portrait(src: str, out: str, side: float = 0.0,
+                   top_reserve: float = 0.0) -> str:
+    """Make every page of `src` a uniform A4 *portrait* sheet.
 
-      * a page that is already A4 portrait is copied through untouched (full size);
-      * a landscape page (wide table, A1 diagram) is rotated 90° to read portrait;
-      * any other size is fitted onto a full A4 portrait page.
-    Content fills the page (only `side` points of margin, default 0) with aspect
-    ratio preserved and centred. Returns `out`.
+      * with no reserve, a page that is already A4 portrait is copied through
+        untouched (full size); other sizes are fitted; landscape pages rotate 90°.
+      * with `top_reserve` > 0 (used for AMT-generated tables), the content is
+        always placed into the area BELOW the reserved top band — guaranteeing a
+        clear strip for the stamped logo, independent of the source page's margins.
+    Aspect ratio is preserved and content centred. Returns `out`.
     """
     src_doc = fitz.open(src)
     new = fitz.open()
@@ -80,12 +81,11 @@ def to_a4_portrait(src: str, out: str, side: float = 0.0) -> str:
         for pno in range(src_doc.page_count):
             sp = src_doc[pno]
             sw, sh = sp.rect.width, sp.rect.height
-            # already A4 portrait -> keep exactly as-is (no scaling, no borders)
-            if abs(sw - A4_W) < TOL and abs(sh - A4_H) < TOL:
-                new.insert_pdf(src_doc, from_page=pno, to_page=pno)
+            if top_reserve <= 0 and abs(sw - A4_W) < TOL and abs(sh - A4_H) < TOL:
+                new.insert_pdf(src_doc, from_page=pno, to_page=pno)   # keep as-is
                 continue
             page = new.new_page(width=A4_W, height=A4_H)
-            rect = fitz.Rect(side, side, A4_W - side, A4_H - side)
+            rect = fitz.Rect(side, side + top_reserve, A4_W - side, A4_H - side)
             rot = 90 if sw > sh else 0
             page.show_pdf_page(rect, src_doc, pno, keep_proportion=True, rotate=rot)
         new.save(out, garbage=3, deflate=True)
