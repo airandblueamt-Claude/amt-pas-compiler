@@ -1,5 +1,5 @@
 """
-render_tables.py — render a BOQ spreadsheet (.xlsx) to branded PDF table pages.
+render_tables.py — render a BOQ spreadsheet (.xlsx) to faithful PDF table pages.
 
 Two engines:
   * LibreOffice ("soffice --headless --convert-to pdf"): pixel-faithful to the
@@ -62,7 +62,7 @@ def have_soffice() -> str | None:
 # Fit-to-page preparation (so wide BOQ sheets scale onto one A4 width, centred,
 # instead of overflowing across several pages)
 # --------------------------------------------------------------------------- #
-def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
+def _prepare_xlsx_for_print(xlsx_path: str) -> str:
     """Return a temp copy of the workbook with ONLY its page setup adjusted so it
     converts to a clean, single-width A4 PDF — fonts, row heights, wrapping, merged
     cells and images are left EXACTLY as the user designed them (faithful)."""
@@ -189,8 +189,7 @@ def _wrap(text, font, size, max_w, is_ar):
     return lines
 
 
-def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
-                          branded: bool = True) -> str:
+def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str) -> str:
     A.register_fonts()
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     # pick the first non-empty, prefer a non-Arabic-named sheet (English layout)
@@ -212,10 +211,8 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
     line_h = size + 2
 
     c = canvas.Canvas(out_pdf, pagesize=(page_w, page_h))
-    # Reserve top/bottom only when branding will be stamped, so chrome never
-    # overlaps the table; unbranded tables use the whole page.
-    top_reserve = A.TABLE_TOP_RESERVE if branded else 28
-    bottom_reserve = A.TABLE_BOTTOM_RESERVE if branded else 28
+    top_reserve = 28
+    bottom_reserve = 28
     top_y = page_h - top_reserve - 6
     bottom_limit = bottom_reserve + 6
     x_left = (page_w - sum(colw)) / 2   # centre the table horizontally
@@ -290,51 +287,31 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
 # Dispatcher
 # --------------------------------------------------------------------------- #
 def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
-                 engine: str = "auto", brand: bool = True) -> tuple[str, str]:
-    """Render xlsx -> A4 landscape PDF table pages. Returns (out_pdf, engine_used).
-
-    The sheet is scaled to fit one page wide and centred. When brand=True the AMT
-    logo + footer banner are stamped on each page (sections like the Tender BOQ,
-    Catalogue and Warranty pass brand=False so no AMT logo appears on them)."""
+                 engine: str = "auto") -> tuple[str, str]:
+    """Render xlsx -> PDF faithfully (no branding, no re-typesetting). The page is
+    A4 portrait, fit-to-width so columns don't split. Returns (out_pdf, engine)."""
     soffice = have_soffice()
     use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
-
-    # render the bare table to a temp file, then stamp branding onto it
-    if brand:
-        fd, raw = tempfile.mkstemp(suffix=".pdf", prefix="amt_tbl_")
-        os.close(fd)
-    else:
-        raw = out_pdf
-
-    eng = "reportlab"
     if use_lo:
         if not soffice:
             raise RuntimeError("render_engine=libreoffice but soffice not found on PATH.")
         prepared = None
         try:
-            prepared = _prepare_xlsx_for_print(xlsx_path, branded=brand)
-            render_with_soffice(prepared, raw, soffice)
-            eng = "libreoffice"
+            prepared = _prepare_xlsx_for_print(xlsx_path)
+            render_with_soffice(prepared, out_pdf, soffice)
+            return out_pdf, "libreoffice"
         except Exception as e:
             if engine == "libreoffice":
                 raise
             print(f"  ! LibreOffice failed ({e}); using reportlab fallback.")
-            render_with_reportlab(xlsx_path, raw, title, ref_no, branded=brand)
         finally:
             if prepared and os.path.exists(prepared):
                 os.remove(prepared)
-    else:
-        render_with_reportlab(xlsx_path, raw, title, ref_no, branded=brand)
-
-    if brand:
-        # AMT logo top-left in the reserved top band (matches every other page)
-        A.stamp_pdf(raw, out_pdf, ref_no, mode="header")
-        if os.path.exists(raw):
-            os.remove(raw)
-    return out_pdf, eng
+    render_with_reportlab(xlsx_path, out_pdf, title, ref_no)
+    return out_pdf, "reportlab"
 
 
 if __name__ == "__main__":
     import sys
-    out, eng = render_table(sys.argv[1], "/tmp/table_test.pdf", "Tender BoQ", "2506038-TCS-010-v.00")
+    out, eng = render_table(sys.argv[1], "/tmp/table_test.pdf", "Tender BoQ", "REF v.00")
     print("engine:", eng, "->", out)
