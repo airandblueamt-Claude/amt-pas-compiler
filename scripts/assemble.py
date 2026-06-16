@@ -29,94 +29,52 @@ def _pdf_pages(path: str) -> int:
     return len(PdfReader(path).pages)
 
 
-# Sections whose CONTENT is a third-party document — the client's Tender BOQ (1),
-# the manufacturer's Catalogue/datasheet (5), the vendor's Partnership certificate
-# (6) and Warranty (7) — get NO AMT logo stamped. Overridable via
-# cfg["unbranded_sections"].
-DEFAULT_UNBRANDED = [1, 5, 6, 7]
-
-
-def _is_branded(sec, cfg) -> bool:
-    unbranded = cfg.get("unbranded_sections", DEFAULT_UNBRANDED)
-    return sec["no"] not in unbranded
-
-
 def _render_section_content(sec, cfg, ref_disp, work, engines):
-    """Produce the list of content-PDF paths for a section, rendering whatever was
-    provided (spreadsheets -> tables, Word/PDF -> appended) so the upload format
-    doesn't matter. Returns (list_of_pdfs, is_placeholder)."""
+    """Render whatever a section contains — spreadsheets -> faithful table PDFs,
+    Word -> PDF, PDFs as-is — then place every page on a uniform A4 portrait sheet.
+    No logo is stamped on content pages; the section divider carries AMT identity.
+    Drawing sections (default §8) keep their native size. Returns (parts, is_empty)."""
     no = sec["no"]
-    branded = _is_branded(sec, cfg)
 
-    # 1) spreadsheets -> clean AMT table pages (no chrome yet — branding is added
-    #    below, with a guaranteed reserved band so it can never overlap the table).
-    tables = []
+    raw = []
+    # 1) spreadsheets -> faithful table pages
     for i, x in enumerate(sec.get("xlsx_list") or ([sec["xlsx"]] if sec.get("xlsx") else [])):
         out = os.path.join(work, f"sec{no}_table{i}.pdf")
         _, eng = RT.render_table(x, out, sec["en"], ref_disp,
-                                 engine=cfg.get("render_engine", "auto"), brand=False)
+                                 engine=cfg.get("render_engine", "auto"))
         engines.add(eng)
-        tables.append(out)
+        raw.append(out)
 
-    # 2) Word docs -> PDF. A heading-only cover ".docx" is redundant with our
-    #    generated divider (stale numbering/refs), so it is skipped.
-    appended = []
+    # 2) Word docs -> PDF (skip a heading-only cover doc, redundant with the divider)
     for i, d in enumerate(sec["docx"]):
         if cfg.get("drop_cover_docx", True) and CD.is_cover_docx(d):
-            print(f"  · §{no}: skipping cover-only doc '{os.path.basename(d)}' "
-                  f"(redundant with the section divider).")
+            print(f"  · §{no}: skipping cover-only doc '{os.path.basename(d)}'.")
             continue
         out = os.path.join(work, f"sec{no}_docx{i}.pdf")
         _, eng = CD.convert_docx(d, out, ref_disp, engine=cfg.get("render_engine", "auto"))
         engines.add(eng)
-        appended.append(out)
+        raw.append(out)
 
     # 3) appended source PDFs (datasheets, diagrams, …)
-    appended += list(sec["pdfs"])
+    raw += list(sec["pdfs"])
 
-    if not tables and not appended:
-        return [], True   # empty -> caller decides placeholder/skip
+    if not raw:
+        return [], True
 
-    # 4) DOCUMENT CONTROL. Every page becomes uniform A4 portrait. Generated tables
-    #    are placed BELOW a reserved top band and the AMT logo is stamped into that
-    #    band — so the logo can never overlap the table (independent of LibreOffice
-    #    margins). Reference pages (datasheets/certs/drawings) keep their full size
-    #    and are NOT stamped (their branded divider carries the identity). Drawing
-    #    sections (default §8) keep their NATIVE size — A1/A3 fold-outs stay large.
+    # 4) uniform A4 portrait; drawing sections keep native size; nothing stamped
     uniform = cfg.get("uniform_pages", True)
     keep_native = no in cfg.get("native_sections", [8])
-    band = A.HEADER_BAND        # reserved top strip for the logo
     parts = []
-
-    for j, p in enumerate(tables):
-        page = p
-        if uniform:
-            a4 = os.path.join(work, f"sec{no}_tbl_a4_{j}.pdf")
-            try:
-                NORM.to_a4_portrait(p, a4, top_reserve=(band if branded else 0))
-                page = a4
-            except Exception as e:
-                print(f"  ! A4 fit failed for {os.path.basename(p)} ({e}); using original.")
-        if branded:
-            st = os.path.join(work, f"sec{no}_tbl_br_{j}.pdf")
-            try:
-                A.stamp_pdf(page, st, ref_disp, mode="header")
-                page = st
-            except Exception as e:
-                print(f"  ! branding failed ({e}); unbranded.")
-        parts.append(page)
-
-    for j, p in enumerate(appended):
+    for j, p in enumerate(raw):
         page = p
         if uniform and not keep_native:
-            a4 = os.path.join(work, f"sec{no}_app_a4_{j}.pdf")
+            a4 = os.path.join(work, f"sec{no}_a4_{j}.pdf")
             try:
-                NORM.to_a4_portrait(p, a4)         # full size, no reserve, no stamp
+                NORM.to_a4_portrait(p, a4)
                 page = a4
             except Exception as e:
                 print(f"  ! A4 fit failed for {os.path.basename(p)} ({e}); using original.")
         parts.append(page)
-
     return parts, False
 
 
