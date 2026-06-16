@@ -29,12 +29,6 @@ from amt_common import (PAGE_W, PAGE_H, MARGIN_L, MARGIN_R, CONTENT_W,
 
 _ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]")
 
-# Every BOQ/material table is re-typeset in ONE font + size for a clean, uniform,
-# legible look. Liberation Sans (the Arial metric clone) is always present with
-# LibreOffice and Arabic falls back to an installed Arabic font automatically.
-TABLE_FONT = "Liberation Sans"
-TABLE_FONT_SIZE = 10
-
 
 def has_arabic(s: str) -> bool:
     return bool(_ARABIC_RE.search(s or ""))
@@ -68,60 +62,6 @@ def have_soffice() -> str | None:
 # Fit-to-page preparation (so wide BOQ sheets scale onto one A4 width, centred,
 # instead of overflowing across several pages)
 # --------------------------------------------------------------------------- #
-def _col_points(ws) -> dict:
-    """Column index (1-based) -> width in points, from the sheet's column widths."""
-    out = {}
-    for i in range(1, (ws.max_column or 0) + 1):
-        letter = openpyxl.utils.get_column_letter(i)
-        dim = ws.column_dimensions.get(letter)
-        chars = dim.width if dim and dim.width else 8.43
-        out[i] = (chars * 7 + 5) * 0.75   # Excel char-width -> px -> points
-    return out
-
-
-def _rows_with_images(ws) -> set:
-    """1-based row numbers that contain (or are spanned by) an embedded image."""
-    rows = set()
-    for img in (getattr(ws, "_images", None) or []):
-        try:
-            a = img.anchor
-            frm = getattr(a, "_from", None)
-            if frm is not None:
-                r0 = frm.row
-                to = getattr(a, "to", None) or getattr(a, "_to", None)
-                r1 = to.row if to is not None else r0
-                for rr in range(r0, r1 + 1):
-                    rows.add(rr + 1)                 # anchors are 0-based
-            elif isinstance(a, str):
-                m = re.search(r"(\d+)", a)
-                if m:
-                    rows.add(int(m.group(1)))
-        except Exception:
-            pass
-    return rows
-
-
-def _estimate_row_height(ws, r, colw_pt, fs=TABLE_FONT_SIZE) -> float:
-    """Estimate (generously) the height in points a row needs for its wrapped text,
-    so image rows are grown enough that text never overlaps. Over-estimating only
-    adds whitespace, so this is deliberately conservative (assumes narrow lines)."""
-    max_h = fs + 10
-    for cell in ws[r]:
-        v = cell.value
-        if v in (None, ""):
-            continue
-        cw = max(colw_pt.get(cell.column, 60) - 8, 14)
-        s = str(v)
-        # conservative chars-per-line (Arabic glyphs run wider -> fewer per line)
-        glyph = fs * (0.62 if has_arabic(s) else 0.52)
-        cpl = max(int(cw / glyph), 1)
-        lines = 0
-        for part in s.split("\n"):
-            lines += max(1, -(-len(part) // cpl))     # ceil division
-        max_h = max(max_h, lines * fs * 1.5 + 12)
-    return max_h * 1.15   # safety so nothing overlaps after fit-scaling
-
-
 def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
     """Return a temp copy of the workbook with ONLY its page setup adjusted so it
     converts to a clean, single-width A4 PDF — fonts, row heights, wrapping, merged
