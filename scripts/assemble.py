@@ -76,20 +76,19 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
         return [], True   # empty -> caller decides placeholder/skip
 
     # 4) DOCUMENT CONTROL: put every content page on a uniform A4 *portrait* sheet
-    #    (landscape drawings/tables rotated to fit). Branded sections reserve a top/
-    #    bottom margin so the stamped AMT logo + ref line sit clear of the content;
-    #    unbranded third-party sections (Tender/Catalogue/Partnership/Warranty) get
-    #    no stamp. Set cfg["uniform_pages"]=False to keep originals at their size.
+    #    WITHOUT shrinking — pages already A4 pass through untouched at full size;
+    #    landscape drawings/tables are rotated to fit. Branded sections get a small
+    #    AMT logo + ref line in the corner; unbranded third-party sections
+    #    (Tender/Catalogue/Partnership/Warranty) get no stamp. cfg["uniform_pages"]
+    #    =False keeps originals at their own size.
     uniform = cfg.get("uniform_pages", True)
-    top_res = 54 if branded else 0
-    bot_res = 26 if branded else 0
     parts = []
     for j, p in enumerate(raw):
         page = p
         if uniform:
             a4 = os.path.join(work, f"sec{no}_a4_{j}.pdf")
             try:
-                NORM.to_a4_portrait(p, a4, top_reserve=top_res, bottom_reserve=bot_res)
+                NORM.to_a4_portrait(p, a4)
                 page = a4
             except Exception as e:
                 print(f"  ! A4 fit failed for {os.path.basename(p)} ({e}); using original.")
