@@ -123,69 +123,17 @@ def _estimate_row_height(ws, r, colw_pt, fs=TABLE_FONT_SIZE) -> float:
 
 
 def _prepare_xlsx_for_print(xlsx_path: str, branded: bool = True) -> str:
-    """Return a temp copy of the workbook set to A4 PORTRAIT, fit-all-columns-to-
-    one-page-wide and centred, so the table matches the rest of the (portrait)
-    document. Wide tables are scaled to fit; AMT branding is added afterwards in a
-    reserved margin so it never overlaps the table."""
+    """Return a temp copy of the workbook with ONLY its page setup adjusted so it
+    converts to a clean, single-width A4 PDF — fonts, row heights, wrapping, merged
+    cells and images are left EXACTLY as the user designed them (faithful)."""
     from openpyxl.worksheet.properties import PageSetupProperties
-    from openpyxl.styles import Alignment, Font
     wb = openpyxl.load_workbook(xlsx_path)
     for ws in wb.worksheets:
         ws.page_setup.orientation = "portrait"      # uniform portrait document
         ws.page_setup.paperSize = 9                 # A4
         ws.page_setup.fitToWidth = 1                # all columns on one page wide
-        ws.page_setup.fitToHeight = 0               # as many pages tall as needed
+        ws.page_setup.fitToHeight = 0               # flow onto more pages if long
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-        ws.print_options.horizontalCentered = True  # centre the table
-        ws.print_options.verticalCentered = False   # top-align so long tables flow
-        # Reserve a top band (inches) for the AMT header logo so it never overlaps
-        # the table. No footer band needed (the divider carries the reference).
-        ws.page_margins.top = 1.15 if branded else 0.5
-        ws.page_margins.bottom = 0.5
-        ws.page_margins.left = 0.45
-        ws.page_margins.right = 0.45
-        ws.page_margins.header = 0.2
-        ws.page_margins.footer = 0.2
-
-        # Make every cell WRAP (so long descriptions never get clipped horizontally),
-        # then size rows so text always fits — fixing both vertical overlap and
-        # half-shown text:
-        #   * rows WITHOUT an image  -> clear the height so LibreOffice auto-fits the
-        #     wrapped text exactly;
-        #   * rows WITH an image     -> grow the row to the taller of (its current
-        #     height, the text it needs) so the picture is never squashed AND its
-        #     text isn't clipped.
-        for row in ws.iter_rows():
-            for cell in row:
-                if cell.value in (None, ""):
-                    continue
-                try:
-                    al = cell.alignment
-                    cell.alignment = Alignment(
-                        horizontal=al.horizontal,
-                        vertical=al.vertical or "center",
-                        wrap_text=True,
-                    )
-                except (AttributeError, TypeError, ValueError):
-                    pass  # merged-cell phantoms / styles we can't touch
-                # Normalise to ONE clean font + size so the whole table is uniform
-                # and legible (keeps bold for headers, colour for the header band,
-                # and Arabic renders via font substitution).
-                try:
-                    f = cell.font
-                    cell.font = Font(name=TABLE_FONT, size=TABLE_FONT_SIZE,
-                                     bold=f.bold, italic=f.italic, color=f.color)
-                except (AttributeError, TypeError, ValueError):
-                    pass
-
-        colw_pt = _col_points(ws)
-        image_rows = _rows_with_images(ws)
-        for r in range(1, (ws.max_row or 0) + 1):
-            if r in image_rows:
-                existing = ws.row_dimensions[r].height or 0
-                ws.row_dimensions[r].height = max(existing, _estimate_row_height(ws, r, colw_pt))
-            else:
-                ws.row_dimensions[r].height = None   # auto-fit to wrapped text
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)
