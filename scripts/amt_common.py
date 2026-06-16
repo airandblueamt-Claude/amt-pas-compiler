@@ -45,9 +45,6 @@ CONTENT_W = PAGE_W - MARGIN_L - MARGIN_R
 LOGO_X = 38
 LOGO_H = 56                               # target header-logo height (points)
 LOGO_TOP_GAP = 16                         # gap from page top to logo top
-# Reserved top strip on generated table pages so the stamped logo never overlaps
-# the table (logo gap + logo height + breathing room).
-HEADER_BAND = LOGO_TOP_GAP + LOGO_H + 14
 
 # Footer banner (full width, bottom)
 BANNER_X = 16
@@ -172,47 +169,3 @@ def text_right(c, x, y, text, font, size, color=BLACK):
     c.setFillColor(BLACK)
 
 
-# --------------------------------------------------------------------------- #
-# Page-branding overlay (stamp the AMT logo/footer onto already-rendered pages)
-# --------------------------------------------------------------------------- #
-# Space (points) reserved at top/bottom of a GENERATED table page so the stamped
-# header logo and footer banner never sit on top of the table. Kept in sync with
-# the LibreOffice print margins set in render_tables._prepare_xlsx_for_print.
-TABLE_TOP_RESERVE = 84
-TABLE_BOTTOM_RESERVE = 92
-
-
-def _stamp_header(c, pw, ph, ref_no):
-    """AMT logo, top-LEFT, sized to LOGO_H — matches the cover/TOC/divider header so
-    every page is consistent. No footer ref (the section divider already carries the
-    reference), which also avoids a duplicate ref where the source sheet has its own.
-    The page reserves a top band so this never overlaps the content."""
-    aspect = _img_aspect(LOGO_PNG)          # h / w
-    h = LOGO_H
-    w = h / aspect
-    c.drawImage(LOGO_PNG, LOGO_X, ph - LOGO_TOP_GAP - h, width=w, height=h,
-                preserveAspectRatio=True, mask="auto")
-
-
-def stamp_pdf(in_pdf: str, out_pdf: str, ref_no: str, mode: str = "header") -> str:
-    """Overlay the AMT header logo (top-left) on every page of `in_pdf`. Page count
-    and sizes are preserved."""
-    from pypdf import PdfReader, PdfWriter
-    register_fonts()
-    reader = PdfReader(in_pdf)
-    writer = PdfWriter()
-    draw = _stamp_header
-    for page in reader.pages:
-        pw = float(page.mediabox.width)
-        ph = float(page.mediabox.height)
-        buf = io.BytesIO()
-        c = canvas.Canvas(buf, pagesize=(pw, ph))
-        draw(c, pw, ph, ref_no)
-        c.showPage()
-        c.save()
-        buf.seek(0)
-        page.merge_page(PdfReader(buf).pages[0])
-        writer.add_page(page)
-    with open(out_pdf, "wb") as fh:
-        writer.write(fh)
-    return out_pdf

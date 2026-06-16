@@ -64,15 +64,11 @@ def normalize_to_a4(src: str, out: str, mode: str = "auto") -> str:
         src_doc.close()
 
 
-def to_a4_portrait(src: str, out: str, side: float = 0.0,
-                   top_reserve: float = 0.0) -> str:
+def to_a4_portrait(src: str, out: str, side: float = 0.0) -> str:
     """Make every page of `src` a uniform A4 *portrait* sheet.
 
-      * with no reserve, a page that is already A4 portrait is copied through
-        untouched (full size); other sizes are fitted; landscape pages rotate 90°.
-      * with `top_reserve` > 0 (used for AMT-generated tables), the content is
-        always placed into the area BELOW the reserved top band — guaranteeing a
-        clear strip for the stamped logo, independent of the source page's margins.
+      * a page that is already A4 portrait is copied through untouched (full
+        size); other sizes are fitted; landscape pages rotate 90°.
     Aspect ratio is preserved and content centred. Returns `out`.
     """
     src_doc = fitz.open(src)
@@ -81,11 +77,11 @@ def to_a4_portrait(src: str, out: str, side: float = 0.0,
         for pno in range(src_doc.page_count):
             sp = src_doc[pno]
             sw, sh = sp.rect.width, sp.rect.height
-            if top_reserve <= 0 and abs(sw - A4_W) < TOL and abs(sh - A4_H) < TOL:
+            if abs(sw - A4_W) < TOL and abs(sh - A4_H) < TOL:
                 new.insert_pdf(src_doc, from_page=pno, to_page=pno)   # keep as-is
                 continue
             page = new.new_page(width=A4_W, height=A4_H)
-            rect = fitz.Rect(side, side + top_reserve, A4_W - side, A4_H - side)
+            rect = fitz.Rect(side, side, A4_W - side, A4_H - side)
             rot = 90 if sw > sh else 0
             page.show_pdf_page(rect, src_doc, pno, keep_proportion=True, rotate=rot)
         new.save(out, garbage=3, deflate=True)
