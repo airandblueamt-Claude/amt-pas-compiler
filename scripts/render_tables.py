@@ -491,15 +491,43 @@ def _workbook_has_images(xlsx_path: str) -> bool:
     return any(getattr(ws, "_images", None) for ws in wb.worksheets)
 
 
+def _prepare_faithful(xlsx_path: str) -> str:
+    """Keep the sheet's OWN page setup (its scale / fit-to-page — what makes it look
+    like Excel and keeps everything proportional), but grow any row that is too short
+    for its text so item descriptions can't clip, with every picture pinned to a fixed
+    size and centred so the row growth never stretches or shifts it. Columns, fonts,
+    page scale and margins are left exactly as the file has them."""
+    wb = openpyxl.load_workbook(xlsx_path)
+    for ws in wb.worksheets:
+        _strip_headers_footers(ws)
+        # turn literal Excel newline escapes into real newlines (defensive)
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if isinstance(v, str) and "_x000a_" in v.lower():
+                    cell.value = v.replace("_x000a_", "\n").replace("_x000A_", "\n")
+        _autofit_text_rows(ws)                       # pin imgs + grow rows + centre imgs
+    fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_faith_")
+    os.close(fd)
+    wb.save(tmp)
+    return tmp
+
+
 def render_faithful(xlsx_path: str, out_pdf: str, soffice: str,
                     branded: bool = False) -> str:
-    """Render the sheet EXACTLY as Excel saves it (its own page setup — nothing
-    touched, so nothing clips and every picture stays where it was placed), then, for
-    branded sections, shrink that faithful page to leave a top band and stamp the AMT
-    logo into it. No row heights, wrapping, fonts or image anchors are modified."""
+    """Render the sheet essentially as Excel lays it out — its own page setup (scale,
+    columns, picture placement) is kept; only too-short rows are grown so text can't
+    clip, and pictures are pinned/centred so they don't shift. For branded sections
+    the faithful page is shrunk to leave a top band and the AMT logo is composited in."""
     import fitz
     raw = out_pdf + ".raw.pdf"
-    render_with_soffice(xlsx_path, raw, soffice)     # zero modification == like Excel
+    prepared = None
+    try:
+        prepared = _prepare_faithful(xlsx_path)
+        render_with_soffice(prepared, raw, soffice)
+    finally:
+        if prepared and os.path.exists(prepared):
+            os.remove(prepared)
     if not branded:
         os.replace(raw, out_pdf)
         return out_pdf
