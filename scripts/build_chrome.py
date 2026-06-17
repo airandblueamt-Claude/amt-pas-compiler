@@ -99,30 +99,50 @@ def _wrap(c, text, font, size, max_w, is_ar):
 # --------------------------------------------------------------------------- #
 # Cover page
 # --------------------------------------------------------------------------- #
+def _caption(c, x, y, text):
+    """A small red small-caps label above a table block."""
+    c.setFont(F_SANS_B, 8.5)
+    c.setFillColor(AMT_RED)
+    c.drawString(x, y, text.upper())
+    c.setFillColor(BLACK)
+
+
 def draw_cover(c, cfg):
     A.register_fonts()
-    A.page_chrome(c, ref_display(cfg))
+    logo_bottom = A.page_chrome(c, ref_display(cfg))
 
-    # Optional client / project logo, centred
-    cy = PAGE_H - 235
+    # --- header rule under the logo, with a submittal label on the right -----
+    rule_y = logo_bottom - 14
+    c.setStrokeColor(AMT_RED)
+    c.setLineWidth(1.2)
+    c.line(MARGIN_L, rule_y, PAGE_W - MARGIN_R, rule_y)
+    c.setFont(F_SANS_B, 8.5)
+    c.setFillColor(GREY_REF)
+    c.drawRightString(PAGE_W - MARGIN_R, rule_y + 6, "TECHNICAL SUBMITTAL")
+    c.setFillColor(BLACK)
+
+    # --- title block (centred), filling the upper third --------------------
+    ty = rule_y - 70
     client_logo = cfg.get("client_logo")
     if client_logo and os.path.exists(client_logo):
         from PIL import Image
         with Image.open(client_logo) as im:
             asp = im.size[1] / im.size[0]
-        lw = 120
-        c.drawImage(client_logo, PAGE_W / 2 - lw / 2, cy - lw * asp / 2,
+        lw = 96
+        c.drawImage(client_logo, PAGE_W / 2 - lw / 2, ty - lw * asp,
                     width=lw, height=lw * asp, preserveAspectRatio=True, mask="auto")
+        ty -= lw * asp + 24
 
-    # Title block
-    ty = PAGE_H - 360
-    A.text_center(c, PAGE_W / 2, ty, ar(cfg["project_title_ar"]), F_AR_B, 13)
-    A.text_center(c, PAGE_W / 2, ty - 20, cfg["project_title_en"], F_EN_B, 13)
-    A.text_center(c, PAGE_W / 2, ty - 40, f"Ref. #{mts_display(cfg)}", F_EN_B, 12)
-    A.text_center(c, PAGE_W / 2, ty - 70,
-                  ar(cfg.get("company_name_ar", "شركة الأبعاد المترامية للتقنية")), F_AR_B, 18)
+    A.text_center(c, PAGE_W / 2, ty, ar(cfg["project_title_ar"]), F_AR_B, 16)
+    A.text_center(c, PAGE_W / 2, ty - 25, cfg["project_title_en"], F_EN_B, 15)
+    c.setStrokeColor(BLUE_BORDER)
+    c.setLineWidth(0.6)
+    c.line(PAGE_W / 2 - 95, ty - 38, PAGE_W / 2 + 95, ty - 38)
+    A.text_center(c, PAGE_W / 2, ty - 58, f"Ref. #{mts_display(cfg)}", F_EN_B, 12, color=AMT_RED)
+    A.text_center(c, PAGE_W / 2, ty - 92,
+                  ar(cfg.get("company_name_ar", "شركة الأبعاد المترامية للتقنية")), F_AR_B, 19)
 
-    # Revision table (Ref | Version | Date | Author | Remarks)
+    # --- document-control tables (anchored to the lower half) ---------------
     rev = cfg["revision"]
     rcw = [150, 60, 95, 60, CONTENT_W - 365]
     rev_cells = [
@@ -130,10 +150,10 @@ def draw_cover(c, cfg):
         [_d(cfg["ref_no"]), _d(cfg["version"]), _d(cfg["date"]),
          _d(rev.get("author", "")), _d(rev.get("remarks", ""))],
     ]
-    rev_top = ty - 105
-    rev_bottom = draw_grid(c, MARGIN_L, rev_top, rcw, [20, 22], rev_cells)
+    rev_label_y = PAGE_H - 380
+    _caption(c, MARGIN_L, rev_label_y, "Revision")
+    rev_bottom = draw_grid(c, MARGIN_L, rev_label_y - 9, rcw, [22, 24], rev_cells)
 
-    # Sign-off table (Ref BY | Prepared by | Approved by) over roles + initials
     so = cfg["signoff"]
     scw = [CONTENT_W / 3] * 3
     so_cells = [
@@ -143,10 +163,14 @@ def draw_cover(c, cfg):
         [_d(so["prepared_by"]["initials"]), _d(so["checked_by"]["initials"]),
          _d(so["approved_by"]["initials"])],
     ]
-    draw_grid(c, MARGIN_L, rev_bottom - 14, scw, [20, 22, 20], so_cells)
+    so_label_y = rev_bottom - 24
+    _caption(c, MARGIN_L, so_label_y, "Approval")
+    so_bottom = draw_grid(c, MARGIN_L, so_label_y - 9, scw, [22, 24, 22], so_cells)
 
-    # Seal
-    A.draw_seal(c, PAGE_W / 2 + 90, 235, w=120)
+    # --- company seal, centred in the space above the footer ----------------
+    footer_top = A.BANNER_W * A._img_aspect(A.BANNER_PNG) + 24
+    seal_cy = (so_bottom + footer_top) / 2
+    A.draw_seal(c, PAGE_W / 2, seal_cy, w=118)
 
 
 # --------------------------------------------------------------------------- #

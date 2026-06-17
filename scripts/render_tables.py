@@ -23,6 +23,7 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
 import amt_common as A
+import stamp as STAMP
 from amt_common import (PAGE_W, PAGE_H, MARGIN_L, MARGIN_R, CONTENT_W,
                         BLUE_HEADER, BLUE_BORDER, WHITE, BLACK, GREY_REF,
                         F_EN, F_EN_B, F_AR, F_AR_B, ar)
@@ -68,12 +69,22 @@ def _prepare_xlsx_for_print(xlsx_path: str) -> str:
     cells and images are left EXACTLY as the user designed them (faithful)."""
     from openpyxl.worksheet.properties import PageSetupProperties
     wb = openpyxl.load_workbook(xlsx_path)
+    top_in = A.logo_header_reserve() / 72.0
     for ws in wb.worksheets:
         ws.page_setup.orientation = "portrait"      # uniform portrait document
         ws.page_setup.paperSize = 9                 # A4
         ws.page_setup.fitToWidth = 1                # all columns on one page wide
         ws.page_setup.fitToHeight = 0               # flow onto more pages if long
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        # centre horizontally with SYMMETRIC left/right margins (an uneven L/R
+        # margin defeats 'center horizontally' and shifts the table sideways),
+        # and reserve a top margin for the stamped AMT logo header.
+        ws.print_options.horizontalCentered = True
+        ws.print_options.verticalCentered = False
+        m = ws.page_margins
+        m.left = m.right = 0.3
+        m.top = round(max(m.top or 0, top_in), 3)
+        m.header = 0.0
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)
@@ -211,7 +222,7 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
     line_h = size + 2
 
     c = canvas.Canvas(out_pdf, pagesize=(page_w, page_h))
-    top_reserve = 28
+    top_reserve = A.logo_header_reserve()   # leave room for the stamped logo
     bottom_reserve = 28
     top_y = page_h - top_reserve - 6
     bottom_limit = bottom_reserve + 6
@@ -288,18 +299,20 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
 # --------------------------------------------------------------------------- #
 def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
                  engine: str = "auto") -> tuple[str, str]:
-    """Render xlsx -> PDF faithfully (no branding, no re-typesetting). The page is
-    A4 portrait, fit-to-width so columns don't split. Returns (out_pdf, engine)."""
+    """Render xlsx -> PDF (faithful table content) and stamp the AMT logo header on
+    each page. The page is A4 portrait, fit-to-width, centred. Returns (out_pdf, engine)."""
     soffice = have_soffice()
     use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
+    raw = out_pdf + ".raw.pdf"
+    engine_used = None
     if use_lo:
         if not soffice:
             raise RuntimeError("render_engine=libreoffice but soffice not found on PATH.")
         prepared = None
         try:
             prepared = _prepare_xlsx_for_print(xlsx_path)
-            render_with_soffice(prepared, out_pdf, soffice)
-            return out_pdf, "libreoffice"
+            render_with_soffice(prepared, raw, soffice)
+            engine_used = "libreoffice"
         except Exception as e:
             if engine == "libreoffice":
                 raise
@@ -307,8 +320,17 @@ def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
         finally:
             if prepared and os.path.exists(prepared):
                 os.remove(prepared)
-    render_with_reportlab(xlsx_path, out_pdf, title, ref_no)
-    return out_pdf, "reportlab"
+    if engine_used is None:
+        render_with_reportlab(xlsx_path, raw, title, ref_no)
+        engine_used = "reportlab"
+
+    # overlay the AMT logo header on every table page
+    STAMP.stamp_logo(raw, out_pdf)
+    try:
+        os.remove(raw)
+    except OSError:
+        pass
+    return out_pdf, engine_used
 
 
 if __name__ == "__main__":

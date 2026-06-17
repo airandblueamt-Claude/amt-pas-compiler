@@ -145,6 +145,12 @@ def page_chrome(c, ref_no: str, with_logo: bool = True) -> float:
     return logo_bottom
 
 
+def logo_header_reserve() -> float:
+    """Top space (points) the stamped logo header occupies on a table page, so the
+    rendered table can leave room for it."""
+    return LOGO_TOP_GAP + LOGO_H + 10
+
+
 # --------------------------------------------------------------------------- #
 # Small drawing utilities
 # --------------------------------------------------------------------------- #

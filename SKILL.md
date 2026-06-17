@@ -21,9 +21,13 @@ divider page followed by its content.
 7. Warranty Certificate · 8. Layout & Single Line Diagram.
 
 Cover carries the ref no., bilingual title, revision table and sign-off table.
-Every AMT-authored page carries the AMT logo (header) and the contact banner
-(footer) with the `Ref.:` line. Sections 1–4 are rendered from the Excel BOQ
-files; sections 5–8 are the source datasheets/letters/drawings appended as-is.
+AMT-authored pages (cover, TOC, dividers) carry the AMT logo header + contact
+banner footer. Sections 1–4 are rendered **faithfully** from the Excel BOQ files
+(LibreOffice — content untouched), then the **AMT logo header is stamped** on each
+table page (see `scripts/stamp.py`); before conversion the sheet's print layout is
+adjusted page-setup-only (centre horizontally with symmetric margins, fit to one
+page wide, top margin reserved for the logo) — cell content/formatting is never
+modified. Sections 5–8 are the source datasheets/letters/drawings appended as-is.
 See `references/document-spec.md` for the full spec.
 
 ## Templates (config-driven section list)
