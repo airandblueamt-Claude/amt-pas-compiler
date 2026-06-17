@@ -121,8 +121,8 @@ def draw_cover(c, cfg):
     c.drawRightString(PAGE_W - MARGIN_R, rule_y + 6, "TECHNICAL SUBMITTAL")
     c.setFillColor(BLACK)
 
-    # --- title block (centred), filling the upper third --------------------
-    ty = rule_y - 70
+    # --- title block (centred between the rule and the control tables) ------
+    ty = rule_y - 100
     client_logo = cfg.get("client_logo")
     if client_logo and os.path.exists(client_logo):
         from PIL import Image
@@ -148,7 +148,7 @@ def draw_cover(c, cfg):
     rev_cells = [
         [_h("Ref"), _h("Version"), _h("Date"), _h("Author"), _h("Remarks")],
         [_d(cfg["ref_no"]), _d(cfg["version"]), _d(cfg["date"]),
-         _d(rev.get("author", "")), _d(rev.get("remarks", ""))],
+         _dash(rev.get("author", "")), _d(rev.get("remarks", ""))],
     ]
     rev_label_y = PAGE_H - 380
     _caption(c, MARGIN_L, rev_label_y, "Revision")
@@ -160,8 +160,8 @@ def draw_cover(c, cfg):
         [_h("Ref BY"), _h("Prepared by"), _h("Approved by")],
         [_d(so["prepared_by"]["role_en"], F_EN_B), _d(so["checked_by"]["role_en"], F_EN_B),
          _d(so["approved_by"]["role_en"], F_EN_B)],
-        [_d(so["prepared_by"]["initials"]), _d(so["checked_by"]["initials"]),
-         _d(so["approved_by"]["initials"])],
+        [_dash(so["prepared_by"]["initials"]), _dash(so["checked_by"]["initials"]),
+         _dash(so["approved_by"]["initials"])],
     ]
     so_label_y = rev_bottom - 24
     _caption(c, MARGIN_L, so_label_y, "Approval")
@@ -296,6 +296,14 @@ def _h(text):
 
 
 def _d(text, font=F_EN, size=9):
+    return {"text": text, "font": font, "size": size}
+
+
+def _dash(text, font=F_EN, size=9):
+    """Like _d, but an empty value renders as a faint centred dash so a blank
+    Author / initials cell looks intentional rather than unfinished."""
+    if text is None or not str(text).strip():
+        return {"text": "—", "font": font, "size": size, "color": GREY_REF}
     return {"text": text, "font": font, "size": size}
 
 

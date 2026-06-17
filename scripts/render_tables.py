@@ -63,10 +63,26 @@ def have_soffice() -> str | None:
 # Fit-to-page preparation (so wide BOQ sheets scale onto one A4 width, centred,
 # instead of overflowing across several pages)
 # --------------------------------------------------------------------------- #
-def _prepare_xlsx_for_print(xlsx_path: str) -> str:
+def _strip_headers_footers(ws) -> None:
+    """Remove the sheet's own print headers/footers. They are page chrome the
+    compiler supplies itself, and a bare newline in one renders as the literal
+    '_x000a_' token in LibreOffice (the artifact seen at the top of §2/§3); §3's
+    '&G' image-headers would also pull in stale graphics. Clearing them keeps the
+    page faithful to the table CONTENT while letting AMT own all page chrome."""
+    for hf in (ws.oddHeader, ws.oddFooter, ws.evenHeader, ws.evenFooter,
+               ws.firstHeader, ws.firstFooter):
+        try:
+            hf.left.text = hf.center.text = hf.right.text = None
+        except Exception:
+            pass
+
+
+def _prepare_xlsx_for_print(xlsx_path: str, reserve_top: bool = True) -> str:
     """Return a temp copy of the workbook with ONLY its page setup adjusted so it
     converts to a clean, single-width A4 PDF — fonts, row heights, wrapping, merged
-    cells and images are left EXACTLY as the user designed them (faithful)."""
+    cells and images are left EXACTLY as the user designed them (faithful). When
+    `reserve_top`, a top margin is left for the stamped AMT logo header (branded
+    sections only); otherwise the user's top margin is untouched."""
     from openpyxl.worksheet.properties import PageSetupProperties
     wb = openpyxl.load_workbook(xlsx_path)
     top_in = A.logo_header_reserve() / 72.0
@@ -77,14 +93,21 @@ def _prepare_xlsx_for_print(xlsx_path: str) -> str:
         ws.page_setup.fitToHeight = 0               # flow onto more pages if long
         ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
         # centre horizontally with SYMMETRIC left/right margins (an uneven L/R
-        # margin defeats 'center horizontally' and shifts the table sideways),
-        # and reserve a top margin for the stamped AMT logo header.
+        # margin defeats 'center horizontally' and shifts the table sideways).
         ws.print_options.horizontalCentered = True
         ws.print_options.verticalCentered = False
         m = ws.page_margins
         m.left = m.right = 0.3
-        m.top = round(max(m.top or 0, top_in), 3)
-        m.header = 0.0
+        if reserve_top:
+            m.top = round(max(m.top or 0, top_in), 3)
+            m.header = 0.0
+        _strip_headers_footers(ws)
+        # defensive: turn any literal Excel newline escape into a real newline
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if isinstance(v, str) and "_x000a_" in v.lower():
+                    cell.value = v.replace("_x000a_", "\n").replace("_x000A_", "\n")
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)
@@ -200,7 +223,8 @@ def _wrap(text, font, size, max_w, is_ar):
     return lines
 
 
-def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str) -> str:
+def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
+                          branded: bool = False) -> str:
     A.register_fonts()
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     # pick the first non-empty, prefer a non-Arabic-named sheet (English layout)
@@ -222,7 +246,8 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
     line_h = size + 2
 
     c = canvas.Canvas(out_pdf, pagesize=(page_w, page_h))
-    top_reserve = A.logo_header_reserve()   # leave room for the stamped logo
+    # reserve room for the stamped logo only on branded (AMT-authored) sections
+    top_reserve = A.logo_header_reserve() if branded else 28
     bottom_reserve = 28
     top_y = page_h - top_reserve - 6
     bottom_limit = bottom_reserve + 6
@@ -298,19 +323,21 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str)
 # Dispatcher
 # --------------------------------------------------------------------------- #
 def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
-                 engine: str = "auto") -> tuple[str, str]:
-    """Render xlsx -> PDF (faithful table content) and stamp the AMT logo header on
-    each page. The page is A4 portrait, fit-to-width, centred. Returns (out_pdf, engine)."""
+                 engine: str = "auto", branded: bool = False) -> tuple[str, str]:
+    """Render xlsx -> PDF (faithful table content), A4 portrait, fit-to-width,
+    centred. When `branded` (AMT-authored sections), a top band is reserved and the
+    AMT logo header is stamped top-left; otherwise the table is left fully faithful
+    with no logo. Returns (out_pdf, engine)."""
     soffice = have_soffice()
     use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
-    raw = out_pdf + ".raw.pdf"
+    raw = out_pdf + ".raw.pdf" if branded else out_pdf
     engine_used = None
     if use_lo:
         if not soffice:
             raise RuntimeError("render_engine=libreoffice but soffice not found on PATH.")
         prepared = None
         try:
-            prepared = _prepare_xlsx_for_print(xlsx_path)
+            prepared = _prepare_xlsx_for_print(xlsx_path, reserve_top=branded)
             render_with_soffice(prepared, raw, soffice)
             engine_used = "libreoffice"
         except Exception as e:
@@ -321,15 +348,15 @@ def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
             if prepared and os.path.exists(prepared):
                 os.remove(prepared)
     if engine_used is None:
-        render_with_reportlab(xlsx_path, raw, title, ref_no)
+        render_with_reportlab(xlsx_path, raw, title, ref_no, branded=branded)
         engine_used = "reportlab"
 
-    # overlay the AMT logo header on every table page
-    STAMP.stamp_logo(raw, out_pdf)
-    try:
-        os.remove(raw)
-    except OSError:
-        pass
+    if branded:
+        STAMP.stamp_logo(raw, out_pdf)   # AMT logo header in the reserved band
+        try:
+            os.remove(raw)
+        except OSError:
+            pass
     return out_pdf, engine_used
 
 

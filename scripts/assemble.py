@@ -31,16 +31,21 @@ def _pdf_pages(path: str) -> int:
 def _render_section_content(sec, cfg, ref_disp, work, engines):
     """Render whatever a section contains — spreadsheets -> faithful table PDFs,
     Word -> PDF, PDFs as-is — then place every page on a uniform A4 portrait sheet.
-    No logo is stamped on content pages; the section divider carries AMT identity.
+    AMT-authored sections (branded_sections, default §2/3/4) carry the AMT logo on
+    their table pages; other sections stay clean and the divider carries identity.
     Drawing sections (default §8) keep their native size. Returns (parts, is_empty)."""
     no = sec["no"]
 
+    # AMT-authored sections (Material Sheet 2, Traceability 3, Material Selection 4)
+    # carry the AMT logo on their table pages; third-party sections stay faithful.
+    branded = no in cfg.get("branded_sections", [2, 3, 4])
+
     raw = []
-    # 1) spreadsheets -> faithful table pages
+    # 1) spreadsheets -> faithful table pages (logo only when branded)
     for i, x in enumerate(sec.get("xlsx_list") or ([sec["xlsx"]] if sec.get("xlsx") else [])):
         out = os.path.join(work, f"sec{no}_table{i}.pdf")
         _, eng = RT.render_table(x, out, sec["en"], ref_disp,
-                                 engine=cfg.get("render_engine", "auto"))
+                                 engine=cfg.get("render_engine", "auto"), branded=branded)
         engines.add(eng)
         raw.append(out)
 
