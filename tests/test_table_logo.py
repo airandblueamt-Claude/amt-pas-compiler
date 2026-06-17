@@ -22,7 +22,7 @@ wb.save(src)
 out_b = tempfile.mkstemp(suffix=".pdf")[1]
 RT.render_table(src, out_b, "BOQ", "REF-001 v.00", branded=True)
 db = fitz.open(out_b)
-assert "Ceiling speaker 6W" in db[0].get_text(), "table text must survive (branded)"
+assert "Ceilingspeaker6W" in "".join(db[0].get_text().split()), "table text must survive (branded)"
 assert len(db[0].get_images()) >= 1, "logo header should be stamped when branded"
 top_band = RT.A.logo_header_reserve() + 8
 in_band = [r for img in db[0].get_images(full=True)
@@ -33,7 +33,7 @@ assert in_band, "stamped logo should sit in the reserved top margin"
 out_u = tempfile.mkstemp(suffix=".pdf")[1]
 RT.render_table(src, out_u, "BOQ", "REF-001 v.00", branded=False)
 du = fitz.open(out_u)
-assert "Ceiling speaker 6W" in du[0].get_text(), "table text must survive (unbranded)"
+assert "Ceilingspeaker6W" in "".join(du[0].get_text().split()), "table text must survive (unbranded)"
 assert len(du[0].get_images()) == 0, "no logo should be stamped when unbranded"
 
 print("OK")

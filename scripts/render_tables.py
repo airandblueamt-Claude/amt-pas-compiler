@@ -77,6 +77,57 @@ def _strip_headers_footers(ws) -> None:
             pass
 
 
+def _autofit_text_rows(ws) -> None:
+    """Fix too-short rows that clip/overlap their (often Arabic) text. Only used on
+    image-free sheets — wrapping + clearing row heights would squash embedded
+    pictures, so sheets WITH images are left faithful.
+
+      * turn wrapping on (so long text never clips horizontally),
+      * clear manual row heights so LibreOffice auto-fits each row to its content,
+      * size multi-row MERGED spans explicitly (auto-fit ignores merged cells, which
+        is why the merged Tender-BoQ items kept overlapping).
+    Fonts and cell values are never changed."""
+    import math
+    from openpyxl.styles import Alignment
+    from openpyxl.utils import get_column_letter
+
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value in (None, ""):
+                continue
+            try:
+                a = cell.alignment
+                cell.alignment = Alignment(horizontal=a.horizontal,
+                                           vertical=a.vertical, wrap_text=True)
+            except (AttributeError, TypeError, ValueError):
+                pass
+    for dim in ws.row_dimensions.values():
+        dim.height = None                         # auto-fit non-merged rows
+
+    # column widths in points (Excel char width -> px -> pt)
+    colpt = {}
+    for i in range(1, (ws.max_column or 0) + 1):
+        d = ws.column_dimensions.get(get_column_letter(i))
+        colpt[i] = ((d.width if d and d.width else 8.43) * 7 + 5) * 0.75
+
+    for mr in ws.merged_cells.ranges:
+        if mr.max_row <= mr.min_row:
+            continue                              # single-row merge: auto-fit handles it
+        top = ws.cell(row=mr.min_row, column=mr.min_col)
+        v = top.value
+        if not isinstance(v, str) or not v.strip():
+            continue
+        wpt = max(sum(colpt.get(c, 50) for c in range(mr.min_col, mr.max_col + 1)) - 10, 14)
+        fs = getattr(top.font, "size", None) or 11
+        cpl = max(int(wpt / (fs * 0.6)), 1)        # Arabic glyphs run wide -> 0.6
+        lines = sum(max(1, math.ceil(len(part) / cpl)) for part in v.split("\n"))
+        need = lines * fs * 1.55 + 12              # generous so nothing overlaps
+        per = need / (mr.max_row - mr.min_row + 1)
+        for r in range(mr.min_row, mr.max_row + 1):
+            cur = ws.row_dimensions[r].height or 0
+            ws.row_dimensions[r].height = max(cur, per)
+
+
 def _prepare_xlsx_for_print(xlsx_path: str, reserve_top: bool = True) -> str:
     """Return a temp copy of the workbook with ONLY its page setup adjusted so it
     converts to a clean, single-width A4 PDF — fonts, row heights, wrapping, merged
@@ -108,6 +159,10 @@ def _prepare_xlsx_for_print(xlsx_path: str, reserve_top: bool = True) -> str:
                 v = cell.value
                 if isinstance(v, str) and "_x000a_" in v.lower():
                     cell.value = v.replace("_x000a_", "\n").replace("_x000A_", "\n")
+        # image-free sheets: grow too-short rows so text never clips/overlaps
+        # (sheets WITH images stay faithful so pictures aren't squashed)
+        if not getattr(ws, "_images", None):
+            _autofit_text_rows(ws)
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)
