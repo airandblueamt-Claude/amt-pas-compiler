@@ -77,19 +77,87 @@ def _strip_headers_footers(ws) -> None:
             pass
 
 
-def _autofit_text_rows(ws) -> None:
-    """Fix too-short rows that clip/overlap their (often Arabic) text. Only used on
-    image-free sheets — wrapping + clearing row heights would squash embedded
-    pictures, so sheets WITH images are left faithful.
+_EMU_PER_PX = 9525
+_EMU_PER_PT = 12700
 
-      * turn wrapping on (so long text never clips horizontally),
-      * clear manual row heights so LibreOffice auto-fits each row to its content,
-      * size multi-row MERGED spans explicitly (auto-fit ignores merged cells, which
-        is why the merged Tender-BoQ items kept overlapping).
-    Fonts and cell values are never changed."""
+
+def _pin_images(ws) -> dict:
+    """Freeze every embedded image to its CURRENT display size as a fixed-size
+    OneCellAnchor, so that changing row heights afterwards can no longer stretch or
+    squash it. Returns {row(1-based): tallest pinned image height in points} so the
+    row auto-fitter can keep image rows at least as tall as their picture."""
+    from openpyxl.utils import get_column_letter
+    from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
+    from openpyxl.drawing.xdr import XDRPositiveSize2D
+
+    def col_emu(c0):                               # full width of 0-based column, EMU
+        d = ws.column_dimensions.get(get_column_letter(c0 + 1))
+        chars = d.width if d and d.width else 8.43
+        return int((round(chars * 7) + 5) * _EMU_PER_PX)
+
+    def row_emu(r0):                               # full height of 0-based row, EMU
+        d = ws.row_dimensions.get(r0 + 1)
+        pts = d.height if d and d.height else 15.0
+        return int(pts * _EMU_PER_PT)
+
+    floor = {}
+    for im in list(getattr(ws, "_images", []) or []):
+        a = getattr(im, "anchor", None)
+        frm = getattr(a, "_from", None)
+        if frm is None:
+            continue
+        to = getattr(a, "to", None)
+        if to is not None:                         # TwoCellAnchor -> measure span
+            if to.col == frm.col:
+                cx = to.colOff - frm.colOff
+            else:
+                cx = (col_emu(frm.col) - frm.colOff
+                      + sum(col_emu(c) for c in range(frm.col + 1, to.col)) + to.colOff)
+            if to.row == frm.row:
+                cy = to.rowOff - frm.rowOff
+            else:
+                cy = (row_emu(frm.row) - frm.rowOff
+                      + sum(row_emu(r) for r in range(frm.row + 1, to.row)) + to.rowOff)
+        else:                                      # already OneCellAnchor
+            ext = getattr(a, "ext", None)
+            cx = ext.cx if ext else col_emu(frm.col)
+            cy = ext.cy if ext else row_emu(frm.row)
+        cx, cy = max(int(cx), 1), max(int(cy), 1)
+        marker = AnchorMarker(col=frm.col, colOff=frm.colOff,
+                              row=frm.row, rowOff=frm.rowOff)
+        im.anchor = OneCellAnchor(_from=marker, ext=XDRPositiveSize2D(cx=cx, cy=cy))
+        r1 = frm.row + 1
+        floor[r1] = max(floor.get(r1, 0.0), cy / _EMU_PER_PT)
+    return floor
+
+
+def _text_height(text, width_pt, fs) -> float:
+    """Generous estimate of the height (points) wrapped text needs in a cell."""
     import math
+    w = max(width_pt - 8, 14)
+    cpl = max(int(w / (fs * 0.6)), 1)             # Arabic glyphs run wide -> 0.6
+    lines = sum(max(1, math.ceil(len(part) / cpl)) for part in str(text).split("\n"))
+    return lines * fs * 1.55 + 12
+
+
+def _autofit_text_rows(ws) -> None:
+    """Make every row tall enough for its text so nothing clips/overlaps, while
+    keeping embedded pictures at their faithful size:
+
+      * pin images first (fixed size) so the height changes below can't distort them,
+      * turn wrapping on (so long text never clips horizontally),
+      * rows WITHOUT an image: drop the manual height so LibreOffice auto-fits the
+        text exactly (no over- or under-shoot),
+      * rows WITH an image: grow to max(current height, the picture's height, the
+        height the text needs) — never shrinks, so the picture keeps its size and any
+        clipped text (e.g. long Arabic item descriptions) gets room,
+      * size multi-row MERGED spans explicitly (auto-fit ignores merged cells).
+    Fonts and cell values are never changed."""
     from openpyxl.styles import Alignment
     from openpyxl.utils import get_column_letter
+
+    img_floor = _pin_images(ws)                   # {row: min height pts}; pins images
+    img_rows = set(img_floor)
 
     for row in ws.iter_rows():
         for cell in row:
@@ -101,31 +169,45 @@ def _autofit_text_rows(ws) -> None:
                                            vertical=a.vertical, wrap_text=True)
             except (AttributeError, TypeError, ValueError):
                 pass
-    for dim in ws.row_dimensions.values():
-        dim.height = None                         # auto-fit non-merged rows
 
-    # column widths in points (Excel char width -> px -> pt)
-    colpt = {}
+    colpt = {}                                    # column widths in points
     for i in range(1, (ws.max_column or 0) + 1):
         d = ws.column_dimensions.get(get_column_letter(i))
         colpt[i] = ((d.width if d and d.width else 8.43) * 7 + 5) * 0.75
 
+    merged_rows = set()
+    for mr in ws.merged_cells.ranges:
+        if mr.max_row > mr.min_row:
+            merged_rows.update(range(mr.min_row, mr.max_row + 1))
+
+    for r in range(1, (ws.max_row or 0) + 1):
+        if r in merged_rows:
+            continue                              # handled per merged-span below
+        if r not in img_rows:
+            ws.row_dimensions[r].height = None    # text-only row -> LibreOffice auto-fit
+            continue
+        need = img_floor.get(r, 0.0)              # never shorter than the picture
+        for cell in ws[r]:
+            v = cell.value
+            if isinstance(v, str) and v.strip():
+                need = max(need, _text_height(v, colpt.get(cell.column, 50),
+                                              getattr(cell.font, "size", None) or 11))
+        cur = ws.row_dimensions[r].height or 0
+        ws.row_dimensions[r].height = max(need, cur)
+
     for mr in ws.merged_cells.ranges:
         if mr.max_row <= mr.min_row:
-            continue                              # single-row merge: auto-fit handles it
+            continue
         top = ws.cell(row=mr.min_row, column=mr.min_col)
         v = top.value
         if not isinstance(v, str) or not v.strip():
             continue
-        wpt = max(sum(colpt.get(c, 50) for c in range(mr.min_col, mr.max_col + 1)) - 10, 14)
-        fs = getattr(top.font, "size", None) or 11
-        cpl = max(int(wpt / (fs * 0.6)), 1)        # Arabic glyphs run wide -> 0.6
-        lines = sum(max(1, math.ceil(len(part) / cpl)) for part in v.split("\n"))
-        need = lines * fs * 1.55 + 12              # generous so nothing overlaps
+        wpt = sum(colpt.get(c, 50) for c in range(mr.min_col, mr.max_col + 1))
+        need = _text_height(v, wpt, getattr(top.font, "size", None) or 11)
         per = need / (mr.max_row - mr.min_row + 1)
         for r in range(mr.min_row, mr.max_row + 1):
             cur = ws.row_dimensions[r].height or 0
-            ws.row_dimensions[r].height = max(cur, per)
+            ws.row_dimensions[r].height = max(cur, per, img_floor.get(r, 0.0))
 
 
 def _prepare_xlsx_for_print(xlsx_path: str, reserve_top: bool = True) -> str:
@@ -159,10 +241,9 @@ def _prepare_xlsx_for_print(xlsx_path: str, reserve_top: bool = True) -> str:
                 v = cell.value
                 if isinstance(v, str) and "_x000a_" in v.lower():
                     cell.value = v.replace("_x000a_", "\n").replace("_x000A_", "\n")
-        # image-free sheets: grow too-short rows so text never clips/overlaps
-        # (sheets WITH images stay faithful so pictures aren't squashed)
-        if not getattr(ws, "_images", None):
-            _autofit_text_rows(ws)
+        # make every row tall enough for its text so nothing clips/overlaps;
+        # embedded pictures are pinned to a fixed size first so they aren't squashed
+        _autofit_text_rows(ws)
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_fit_")
     os.close(fd)
     wb.save(tmp)

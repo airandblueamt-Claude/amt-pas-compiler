@@ -31,16 +31,16 @@ def _pdf_pages(path: str) -> int:
 def _render_section_content(sec, cfg, ref_disp, work, engines):
     """Render whatever a section contains — spreadsheets -> faithful table PDFs,
     Word -> PDF, PDFs as-is — then place every page on a uniform A4 portrait sheet.
-    AMT-authored sections (branded_sections, default §2/3/4) carry the AMT logo on
-    their table pages; other sections stay clean and the divider carries identity.
-    Drawing sections (default §8) keep their native size. Returns (parts, is_empty)."""
+    Per the approved design, branding lives on the section DIVIDER pages only: every
+    table/content page is left clean-and-faithful (no logo stamp), so §2, §3 and §4
+    all look consistent and no sheet is cramped by a reserved logo band. Drawing
+    sections (default §8) keep their native size. Returns (parts, is_empty)."""
     no = sec["no"]
 
-    # AMT-authored sheets §2 (Material Sheet) and §3 (Traceability) carry the AMT
-    # logo on their table pages. §4 Material Selection is intentionally NOT branded:
-    # it's an image-rich sheet that fills the page, and reserving a logo band cramps
-    # it — it renders best left faithful, as before. Third-party sections stay clean.
-    branded = no in cfg.get("branded_sections", [2, 3])
+    # Branding is divider-only: no AMT logo is stamped on any content/table page
+    # (the divider in front of each section carries the logo + bilingual title).
+    # `branded_sections` defaults to none; it stays configurable for one-off needs.
+    branded = no in cfg.get("branded_sections", [])
 
     raw = []
     # 1) spreadsheets -> faithful table pages (logo only when branded)
