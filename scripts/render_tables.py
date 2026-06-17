@@ -81,26 +81,30 @@ _EMU_PER_PX = 9525
 _EMU_PER_PT = 12700
 
 
-def _pin_images(ws) -> dict:
+def _col_emu(ws, c0):                              # full width of 0-based column, EMU
+    from openpyxl.utils import get_column_letter
+    d = ws.column_dimensions.get(get_column_letter(c0 + 1))
+    chars = d.width if d and d.width else 8.43
+    return int((round(chars * 7) + 5) * _EMU_PER_PX)
+
+
+def _pin_images(ws):
     """Freeze every embedded image to its CURRENT display size as a fixed-size
     OneCellAnchor, so that changing row heights afterwards can no longer stretch or
-    squash it. Returns {row(1-based): tallest pinned image height in points} so the
-    row auto-fitter can keep image rows at least as tall as their picture."""
-    from openpyxl.utils import get_column_letter
+    squash it. Returns (floor, records):
+      * floor   = {row(1-based): tallest pinned image height in points} so the row
+                  auto-fitter keeps image rows at least as tall as their picture,
+      * records = [{im, col0, row1, cx, cy}] so the caller can re-centre each picture
+                  inside its (now taller) cell once final row heights are known."""
     from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
     from openpyxl.drawing.xdr import XDRPositiveSize2D
-
-    def col_emu(c0):                               # full width of 0-based column, EMU
-        d = ws.column_dimensions.get(get_column_letter(c0 + 1))
-        chars = d.width if d and d.width else 8.43
-        return int((round(chars * 7) + 5) * _EMU_PER_PX)
 
     def row_emu(r0):                               # full height of 0-based row, EMU
         d = ws.row_dimensions.get(r0 + 1)
         pts = d.height if d and d.height else 15.0
         return int(pts * _EMU_PER_PT)
 
-    floor = {}
+    floor, records = {}, []
     for im in list(getattr(ws, "_images", []) or []):
         a = getattr(im, "anchor", None)
         frm = getattr(a, "_from", None)
@@ -111,8 +115,8 @@ def _pin_images(ws) -> dict:
             if to.col == frm.col:
                 cx = to.colOff - frm.colOff
             else:
-                cx = (col_emu(frm.col) - frm.colOff
-                      + sum(col_emu(c) for c in range(frm.col + 1, to.col)) + to.colOff)
+                cx = (_col_emu(ws, frm.col) - frm.colOff
+                      + sum(_col_emu(ws, c) for c in range(frm.col + 1, to.col)) + to.colOff)
             if to.row == frm.row:
                 cy = to.rowOff - frm.rowOff
             else:
@@ -120,7 +124,7 @@ def _pin_images(ws) -> dict:
                       + sum(row_emu(r) for r in range(frm.row + 1, to.row)) + to.rowOff)
         else:                                      # already OneCellAnchor
             ext = getattr(a, "ext", None)
-            cx = ext.cx if ext else col_emu(frm.col)
+            cx = ext.cx if ext else _col_emu(ws, frm.col)
             cy = ext.cy if ext else row_emu(frm.row)
         cx, cy = max(int(cx), 1), max(int(cy), 1)
         marker = AnchorMarker(col=frm.col, colOff=frm.colOff,
@@ -128,7 +132,23 @@ def _pin_images(ws) -> dict:
         im.anchor = OneCellAnchor(_from=marker, ext=XDRPositiveSize2D(cx=cx, cy=cy))
         r1 = frm.row + 1
         floor[r1] = max(floor.get(r1, 0.0), cy / _EMU_PER_PT)
-    return floor
+        records.append({"im": im, "col0": frm.col, "row1": r1, "cx": cx, "cy": cy})
+    return floor, records
+
+
+def _centre_images(ws, records) -> None:
+    """Now that final row heights are set, sit each pinned picture in the MIDDLE of
+    its cell (vertical + horizontal) instead of jammed against the top-left corner —
+    so a reference photo lines up with its item in the grown row instead of floating
+    above a gap."""
+    for rec in records:
+        col0, r1, cx, cy = rec["col0"], rec["row1"], rec["cx"], rec["cy"]
+        h = ws.row_dimensions[r1].height
+        row_h_emu = int(h * _EMU_PER_PT) if h else cy
+        col_w_emu = _col_emu(ws, col0)
+        frm = rec["im"].anchor._from
+        frm.colOff = max(0, (col_w_emu - cx) // 2)
+        frm.rowOff = max(0, (row_h_emu - cy) // 2)
 
 
 def _text_height(text, width_pt, fs) -> float:
@@ -156,7 +176,7 @@ def _autofit_text_rows(ws) -> None:
     from openpyxl.styles import Alignment
     from openpyxl.utils import get_column_letter
 
-    img_floor = _pin_images(ws)                   # {row: min height pts}; pins images
+    img_floor, img_records = _pin_images(ws)      # pins images; {row: min height pts}
     img_rows = set(img_floor)
 
     for row in ws.iter_rows():
@@ -208,6 +228,8 @@ def _autofit_text_rows(ws) -> None:
         for r in range(mr.min_row, mr.max_row + 1):
             cur = ws.row_dimensions[r].height or 0
             ws.row_dimensions[r].height = max(cur, per, img_floor.get(r, 0.0))
+
+    _centre_images(ws, img_records)               # sit pictures mid-cell in grown rows
 
 
 def _prepare_xlsx_for_print(xlsx_path: str, reserve_top: bool = True) -> str:
