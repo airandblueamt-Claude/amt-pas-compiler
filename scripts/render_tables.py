@@ -137,18 +137,25 @@ def _pin_images(ws):
 
 
 def _centre_images(ws, records) -> None:
-    """Now that final row heights are set, sit each pinned picture in the MIDDLE of
-    its cell (vertical + horizontal) instead of jammed against the top-left corner —
-    so a reference photo lines up with its item in the grown row instead of floating
-    above a gap."""
+    """Now that final row heights are set, size each pinned picture to FILL its cell
+    (keeping its aspect ratio) and centre it. This way a reference photo looks full and
+    proportional whatever height the row grew to — never a tiny thumbnail floating in a
+    tall cell, never stretched."""
+    from openpyxl.drawing.xdr import XDRPositiveSize2D
+    pad = int(2 * _EMU_PER_PT)                       # small breathing room each side
     for rec in records:
         col0, r1, cx, cy = rec["col0"], rec["row1"], rec["cx"], rec["cy"]
         h = ws.row_dimensions[r1].height
         row_h_emu = int(h * _EMU_PER_PT) if h else cy
         col_w_emu = _col_emu(ws, col0)
-        frm = rec["im"].anchor._from
-        frm.colOff = max(0, (col_w_emu - cx) // 2)
-        frm.rowOff = max(0, (row_h_emu - cy) // 2)
+        avail_w = max(col_w_emu - 2 * pad, 1)
+        avail_h = max(row_h_emu - 2 * pad, 1)
+        scale = min(avail_w / cx, avail_h / cy, 2.0)  # fit to cell; cap upscale to 2x
+        new_cx, new_cy = max(int(cx * scale), 1), max(int(cy * scale), 1)
+        anch = rec["im"].anchor
+        anch.ext = XDRPositiveSize2D(cx=new_cx, cy=new_cy)
+        anch._from.colOff = max(0, (col_w_emu - new_cx) // 2)
+        anch._from.rowOff = max(0, (row_h_emu - new_cy) // 2)
 
 
 def _text_height(text, width_pt, fs) -> float:
