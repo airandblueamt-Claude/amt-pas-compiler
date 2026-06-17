@@ -478,16 +478,77 @@ def render_with_reportlab(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
 
 
 # --------------------------------------------------------------------------- #
+# Faithful path (image-rich sheets, e.g. §4 Material Selection)
+# --------------------------------------------------------------------------- #
+def _workbook_has_images(xlsx_path: str) -> bool:
+    """True if any sheet embeds a picture — those sheets are laid out around their
+    images in Excel, so re-typesetting them clips text / shifts pictures. They are
+    rendered faithfully instead."""
+    try:
+        wb = openpyxl.load_workbook(xlsx_path)
+    except Exception:
+        return False
+    return any(getattr(ws, "_images", None) for ws in wb.worksheets)
+
+
+def render_faithful(xlsx_path: str, out_pdf: str, soffice: str,
+                    branded: bool = False) -> str:
+    """Render the sheet EXACTLY as Excel saves it (its own page setup — nothing
+    touched, so nothing clips and every picture stays where it was placed), then, for
+    branded sections, shrink that faithful page to leave a top band and stamp the AMT
+    logo into it. No row heights, wrapping, fonts or image anchors are modified."""
+    import fitz
+    raw = out_pdf + ".raw.pdf"
+    render_with_soffice(xlsx_path, raw, soffice)     # zero modification == like Excel
+    if not branded:
+        os.replace(raw, out_pdf)
+        return out_pdf
+
+    src = fitz.open(raw)
+    out = fitz.open()
+    W, H = A.PAGE_W, A.PAGE_H
+    band = A.logo_header_reserve()                   # top space reserved for the logo
+    lw = A.LOGO_H / A._img_aspect(A.LOGO_PNG)
+    logo_rect = fitz.Rect(A.LOGO_X, A.LOGO_TOP_GAP,
+                          A.LOGO_X + lw, A.LOGO_TOP_GAP + A.LOGO_H)
+    target = fitz.Rect(12, band, W - 12, H - 12)     # faithful page scaled in here
+    for i in range(src.page_count):
+        pg = out.new_page(width=W, height=H)
+        pg.show_pdf_page(target, src, i)             # uniform scale, keeps aspect
+        pg.insert_image(logo_rect, filename=A.LOGO_PNG, keep_proportion=True)
+    out.save(out_pdf)
+    src.close()
+    out.close()
+    try:
+        os.remove(raw)
+    except OSError:
+        pass
+    return out_pdf
+
+
+# --------------------------------------------------------------------------- #
 # Dispatcher
 # --------------------------------------------------------------------------- #
 def render_table(xlsx_path: str, out_pdf: str, title: str, ref_no: str,
                  engine: str = "auto", branded: bool = False) -> tuple[str, str]:
-    """Render xlsx -> PDF (faithful table content), A4 portrait, fit-to-width,
-    centred. When `branded` (AMT-authored sections), a top band is reserved and the
-    AMT logo header is stamped top-left; otherwise the table is left fully faithful
-    with no logo. Returns (out_pdf, engine)."""
+    """Render xlsx -> PDF table pages, A4 portrait. Sheets that embed pictures (e.g.
+    §4 Material Selection) are rendered FAITHFULLY — exactly as Excel lays them out,
+    with the logo composited on top when branded — so text never clips and pictures
+    never shift. Other sheets are fit-to-width and centred, with the AMT logo stamped
+    when branded. Returns (out_pdf, engine)."""
     soffice = have_soffice()
     use_lo = (engine == "libreoffice") or (engine == "auto" and soffice)
+
+    # image-rich sheets -> faithful Excel layout (+ composited logo when branded)
+    if use_lo and soffice and _workbook_has_images(xlsx_path):
+        try:
+            render_faithful(xlsx_path, out_pdf, soffice, branded=branded)
+            return out_pdf, "libreoffice"
+        except Exception as e:
+            if engine == "libreoffice":
+                raise
+            print(f"  ! faithful render failed ({e}); falling back.")
+
     raw = out_pdf + ".raw.pdf" if branded else out_pdf
     engine_used = None
     if use_lo:
