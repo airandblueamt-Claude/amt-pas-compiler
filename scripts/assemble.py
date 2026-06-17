@@ -36,9 +36,11 @@ def _render_section_content(sec, cfg, ref_disp, work, engines):
     Drawing sections (default §8) keep their native size. Returns (parts, is_empty)."""
     no = sec["no"]
 
-    # AMT-authored sections (Material Sheet 2, Traceability 3, Material Selection 4)
-    # carry the AMT logo on their table pages; third-party sections stay faithful.
-    branded = no in cfg.get("branded_sections", [2, 3, 4])
+    # AMT-authored sheets §2 (Material Sheet) and §3 (Traceability) carry the AMT
+    # logo on their table pages. §4 Material Selection is intentionally NOT branded:
+    # it's an image-rich sheet that fills the page, and reserving a logo band cramps
+    # it — it renders best left faithful, as before. Third-party sections stay clean.
+    branded = no in cfg.get("branded_sections", [2, 3])
 
     raw = []
     # 1) spreadsheets -> faithful table pages (logo only when branded)
