@@ -498,12 +498,62 @@ def _workbook_has_images(xlsx_path: str) -> bool:
     return any(getattr(ws, "_images", None) for ws in wb.worksheets)
 
 
+def _shrink_to_fit(ws) -> None:
+    """Excel-style 'shrink to fit', per cell: if a cell's wrapped text is taller than
+    its row, reduce ONLY that cell's font just enough to fit. This keeps every row
+    height, column width, picture size and placement exactly as the file has them (so
+    the reference images stay faithful), while long item descriptions still show in
+    full instead of being clipped. Merged cells use their full spanned height/width."""
+    import math
+    from copy import copy
+    from openpyxl.utils import get_column_letter
+
+    def colpt(c):
+        d = ws.column_dimensions.get(get_column_letter(c))
+        return ((d.width if d and d.width else 8.43) * 7 + 5) * 0.75
+
+    merged_top = {}                                  # (row,col) of a merge -> its range
+    covered = set()                                  # cells hidden under a merge
+    for mr in ws.merged_cells.ranges:
+        merged_top[(mr.min_row, mr.min_col)] = mr
+        for rr in range(mr.min_row, mr.max_row + 1):
+            for cc in range(mr.min_col, mr.max_col + 1):
+                if (rr, cc) != (mr.min_row, mr.min_col):
+                    covered.add((rr, cc))
+
+    for r in range(1, (ws.max_row or 0) + 1):
+        for cell in ws[r]:
+            v = cell.value
+            if not isinstance(v, str) or not v.strip():
+                continue
+            if (cell.row, cell.column) in covered:
+                continue
+            mr = merged_top.get((cell.row, cell.column))
+            if mr is not None:
+                avail_h = sum((ws.row_dimensions[rr].height or 15.0)
+                              for rr in range(mr.min_row, mr.max_row + 1))
+                w = sum(colpt(cc) for cc in range(mr.min_col, mr.max_col + 1))
+            else:
+                avail_h = ws.row_dimensions[cell.row].height
+                w = colpt(cell.column)
+            if not avail_h:
+                continue
+            fs = getattr(cell.font, "size", None) or 11
+            cpl = max(int((w - 8) / (fs * 0.55)), 1)
+            lines = sum(max(1, math.ceil(len(p) / cpl)) for p in v.split("\n"))
+            need = lines * fs * 1.4 + 6
+            if need > avail_h:                       # too tall -> shrink to fit
+                f = copy(cell.font)
+                f.size = round(max(fs * avail_h / need, 6.0), 1)
+                cell.font = f
+
+
 def _prepare_faithful(xlsx_path: str) -> str:
-    """Keep the sheet's OWN page setup (its scale / fit-to-page — what makes it look
-    like Excel and keeps everything proportional), but grow any row that is too short
-    for its text so item descriptions can't clip, with every picture pinned to a fixed
-    size and centred so the row growth never stretches or shifts it. Columns, fonts,
-    page scale and margins are left exactly as the file has them."""
+    """Keep the sheet EXACTLY as Excel lays it out — its own page setup, row heights,
+    column widths and picture placement are all untouched (so the reference images
+    stay faithful) — and only SHRINK the font of any cell whose text is too tall for
+    its row, so long item descriptions show in full without clipping and without
+    growing the row (which would disturb its picture)."""
     wb = openpyxl.load_workbook(xlsx_path)
     for ws in wb.worksheets:
         _strip_headers_footers(ws)
@@ -513,7 +563,7 @@ def _prepare_faithful(xlsx_path: str) -> str:
                 v = cell.value
                 if isinstance(v, str) and "_x000a_" in v.lower():
                     cell.value = v.replace("_x000a_", "\n").replace("_x000A_", "\n")
-        _autofit_text_rows(ws)                       # pin imgs + grow rows + centre imgs
+        _shrink_to_fit(ws)                           # fit long text, leave rows/images
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", prefix="amt_faith_")
     os.close(fd)
     wb.save(tmp)
